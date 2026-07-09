@@ -1,0 +1,72 @@
+# Pi-NVR default configuration.
+# Installed to /etc/pi-nvr/config.yaml by install.sh; edit that copy, not this one.
+# All values here can also be changed from Settings in the web UI, which
+# rewrites this file in place (never hardcode values in Python).
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  https_enabled: false
+  https_cert: ""
+  https_key: ""
+  session_secret_env: "PI_NVR_SESSION_SECRET"   # set by install.sh into systemd env file
+  session_timeout_minutes: 60
+  remember_me_days: 30
+
+database:
+  path: "database/pi-nvr.db"
+
+storage:
+  default_target: "local"
+  targets:
+    local:
+      path: "recordings"
+      type: "local"
+  retention:
+    max_age_days: 30
+    max_usage_percent: 85
+    min_free_percent: 10
+    check_interval_minutes: 15
+
+recording:
+  container: "mp4"          # mp4 or mkv
+  segment_seconds: 600
+  pre_record_seconds: 5
+  post_record_seconds: 10
+  overlay:
+    timestamp: true
+    camera_name: true
+
+motion:
+  enabled_default: false
+  downscale_width: 320
+  downscale_height: 180
+  sample_fps: 5
+  sensitivity: 25            # OpenCV threshold, 1-100 scaled internally
+  min_object_area_percent: 0.5
+  max_object_area_percent: 80
+  cooldown_seconds: 10
+
+notifications:
+  browser_enabled: true
+  email:
+    enabled: false
+    smtp_host: ""
+    smtp_port: 587
+    smtp_user: ""
+    smtp_password_env: "PI_NVR_SMTP_PASSWORD"
+    from_address: ""
+    to_addresses: []
+
+logging:
+  level: "INFO"
+  dir: "logs"
+  max_bytes: 5000000
+  backup_count: 5
+
+system:
+  timezone: "UTC"
+  language: "en"
+
+plugins:
+  enabled: []
