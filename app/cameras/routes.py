@@ -7,10 +7,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_admin, get_current_user
-from app.cameras import onvif_discovery
+from app.cameras import onvif_discovery, ptz as ptz_mod
 from app.cameras.crypto import decrypt, encrypt
 from app.database import get_db
-from app.models import Camera, CameraProtocol, RecordingMode, User
+from app.models import Camera, CameraProtocol, PTZPreset, RecordingMode, User
 
 logger = logging.getLogger("pi_nvr.cameras")
 router = APIRouter()
@@ -190,3 +190,115 @@ def dataclasses_asdict_safe(obj) -> dict:
     import dataclasses
 
     return dataclasses.asdict(obj)
+
+
+# --------------------------------------------------------------------------
+# PTZ controls (Phase 9). All PTZ endpoints require the camera to have
+# ONVIF host/credentials configured; unsupported cameras get a 409.
+# --------------------------------------------------------------------------
+
+class PTZMoveRequest(BaseModel):
+    direction: str  # up/down/left/right/zoom_in/zoom_out
+    speed: float = 0.5
+
+
+class PTZPresetIn(BaseModel):
+    name: str
+
+
+class PTZPresetOut(BaseModel):
+    id: int
+    name: str
+    onvif_token: str | None
+
+    class Config:
+        from_attributes = True
+
+
+def _get_camera_or_404(db: Session, camera_id: int) -> Camera:
+    camera = db.get(Camera, camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    return camera
+
+
+@router.post("/{camera_id}/ptz/detect")
+async def detect_ptz_support(camera_id: int, db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    camera = _get_camera_or_404(db, camera_id)
+    supported = await ptz_mod.get_capabilities(camera)
+    camera.supports_ptz = supported
+    db.add(camera)
+    return {"supports_ptz": supported}
+
+
+@router.post("/{camera_id}/ptz/move")
+async def ptz_move(camera_id: int, payload: PTZMoveRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    camera = _get_camera_or_404(db, camera_id)
+    try:
+        await ptz_mod.move(camera, payload.direction, payload.speed)
+    except ptz_mod.PTZUnsupportedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.post("/{camera_id}/ptz/stop")
+async def ptz_stop(camera_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    camera = _get_camera_or_404(db, camera_id)
+    try:
+        await ptz_mod.stop(camera)
+    except ptz_mod.PTZUnsupportedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.post("/{camera_id}/ptz/home")
+async def ptz_home(camera_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    camera = _get_camera_or_404(db, camera_id)
+    try:
+        await ptz_mod.go_home(camera)
+    except ptz_mod.PTZUnsupportedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.get("/{camera_id}/ptz/presets", response_model=list[PTZPresetOut])
+def list_ptz_presets(camera_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    _get_camera_or_404(db, camera_id)
+    return db.query(PTZPreset).filter(PTZPreset.camera_id == camera_id).all()
+
+
+@router.post("/{camera_id}/ptz/presets", response_model=PTZPresetOut)
+async def create_ptz_preset(camera_id: int, payload: PTZPresetIn, db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    camera = _get_camera_or_404(db, camera_id)
+    try:
+        token = await ptz_mod.set_preset(camera, payload.name)
+    except ptz_mod.PTZUnsupportedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    preset = PTZPreset(camera_id=camera_id, name=payload.name, onvif_token=token)
+    db.add(preset)
+    db.flush()
+    return preset
+
+
+@router.post("/{camera_id}/ptz/presets/{preset_id}/goto")
+async def goto_ptz_preset(camera_id: int, preset_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    camera = _get_camera_or_404(db, camera_id)
+    preset = db.get(PTZPreset, preset_id)
+    if preset is None or preset.camera_id != camera_id:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    try:
+        await ptz_mod.goto_preset(camera, preset.onvif_token)
+    except ptz_mod.PTZUnsupportedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.delete("/{camera_id}/ptz/presets/{preset_id}")
+def delete_ptz_preset(camera_id: int, preset_id: int, db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    preset = db.get(PTZPreset, preset_id)
+    if preset is None or preset.camera_id != camera_id:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    db.delete(preset)
+    return {"ok": True}
