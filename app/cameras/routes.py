@@ -186,6 +186,70 @@ async def discover_cameras(user: User = Depends(require_admin)):
     return {"devices": [d.to_dict() for d in devices]}
 
 
+# --------------------------------------------------------------------------
+# Live view (MJPEG). This is the one place the software *does* decode
+# video continuously -- there's no way to show a live low-latency preview
+# in a plain <img>/<video> tag from a stream-copied recording. Costly, so
+# it's meant for a small number of concurrent viewers, not the recording
+# path itself, and it only runs while a browser tab has it open.
+# --------------------------------------------------------------------------
+
+import asyncio as _asyncio  # noqa: E402
+from fastapi.responses import StreamingResponse  # noqa: E402
+
+
+@router.get("/{camera_id}/mjpeg")
+async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    camera = db.get(Camera, camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    rtsp_url = camera.rtsp_substream_url or camera.rtsp_url
+    if camera.username and camera.password_enc and "@" not in rtsp_url.split("://", 1)[-1]:
+        password = decrypt(camera.password_enc)
+        scheme, rest = rtsp_url.split("://", 1)
+        rtsp_url = f"{scheme}://{camera.username}:{password}@{rest}"
+
+    cmd = [
+        "ffmpeg", "-nostdin", "-loglevel", "error",
+        "-rtsp_transport", "tcp", "-i", rtsp_url,
+        "-f", "mjpeg", "-q:v", "6", "-r", "8",
+        "-vf", "scale=640:-2",
+        "pipe:1",
+    ]
+    proc = await _asyncio.create_subprocess_exec(*cmd, stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.DEVNULL)
+
+    boundary = "pi-nvr-frame"
+
+    async def frame_generator():
+        try:
+            buffer = b""
+            while True:
+                chunk = await proc.stdout.read(4096)
+                if not chunk:
+                    break
+                buffer += chunk
+                # JPEG frames are delimited by SOI (FFD8) / EOI (FFD9) markers.
+                while True:
+                    start = buffer.find(b"\xff\xd8")
+                    end = buffer.find(b"\xff\xd9")
+                    if start == -1 or end == -1 or end < start:
+                        break
+                    frame = buffer[start:end + 2]
+                    buffer = buffer[end + 2:]
+                    yield (
+                        f"--{boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: {len(frame)}\r\n\r\n"
+                    ).encode() + frame + b"\r\n"
+        finally:
+            if proc.returncode is None:
+                proc.terminate()
+
+    return StreamingResponse(
+        frame_generator(),
+        media_type=f"multipart/x-mixed-replace; boundary={boundary}",
+    )
+
+
 def dataclasses_asdict_safe(obj) -> dict:
     import dataclasses
 

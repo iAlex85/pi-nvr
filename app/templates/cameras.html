@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Cameras — Pi-NVR{% endblock %}
+{% block page_title %}Cameras{% endblock %}
+{% block content %}
+<div style="display:flex; justify-content:space-between; margin-bottom:16px;">
+  <div></div>
+  <div>
+    <button class="btn" id="discoverBtn">Discover (ONVIF)</button>
+    <button class="btn btn-primary" id="addCameraBtn">Add camera</button>
+  </div>
+</div>
+
+<table>
+  <thead><tr><th>Name</th><th>Group</th><th>Protocol</th><th>Status</th><th>Recording</th><th>Motion</th><th></th></tr></thead>
+  <tbody id="camerasBody"></tbody>
+</table>
+
+<dialog id="cameraDialog" style="background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:6px; width:420px; padding:20px;">
+  <form method="dialog" id="cameraForm">
+    <h3 id="dialogTitle" style="margin-top:0;">Add camera</h3>
+    <input type="hidden" id="cameraId" />
+    <div class="field"><label>Name</label><input id="fName" required /></div>
+    <div class="field"><label>Group</label><input id="fGroup" /></div>
+    <div class="field"><label>RTSP URL</label><input id="fRtsp" placeholder="rtsp://192.168.1.50:554/stream1" required /></div>
+    <div class="field"><label>RTSP substream URL (optional, used for motion detection)</label><input id="fRtspSub" /></div>
+    <div class="field"><label>Username</label><input id="fUser" /></div>
+    <div class="field"><label>Password</label><input id="fPass" type="password" /></div>
+    <div class="field"><label>Recording mode</label>
+      <select id="fMode">
+        <option value="off">Off</option>
+        <option value="continuous">Continuous</option>
+        <option value="motion">Motion-triggered</option>
+        <option value="scheduled">Scheduled</option>
+      </select>
+    </div>
+    <div class="field" style="display:flex; gap:8px; align-items:center;">
+      <input type="checkbox" id="fMotion" style="width:auto;" /><label style="margin:0;" for="fMotion">Enable motion detection</label>
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button type="button" class="btn" id="cancelDialog">Cancel</button>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script>
+  const body = document.getElementById("camerasBody");
+  const dialog = document.getElementById("cameraDialog");
+
+  async function loadCameras() {
+    try {
+      const [cameras, statusMap] = await Promise.all([
+        PiNVR.api("/cameras"),
+        PiNVR.api("/cameras/status/all"),
+      ]);
+      body.innerHTML = cameras.map((c) => {
+        const s = statusMap[c.id] || {};
+        return `<tr>
+          <td>${c.name}</td>
+          <td>${c.group || "--"}</td>
+          <td>${c.protocol}</td>
+          <td><span class="badge ${s.online ? "badge-online" : "badge-offline"}">${s.online ? "ONLINE" : "OFFLINE"}</span></td>
+          <td>${c.recording_mode}</td>
+          <td>${c.motion_enabled ? "on" : "off"}</td>
+          <td style="white-space:nowrap;">
+            <button class="btn" data-edit='${JSON.stringify(c)}' style="padding:4px 8px;">Edit</button>
+            <button class="btn btn-danger" data-delete="${c.id}" style="padding:4px 8px;">Delete</button>
+          </td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="7" style="color:var(--text-faint);">No cameras yet.</td></tr>`;
+    } catch (e) { PiNVR.toast(e.message, true); }
+  }
+
+  function openDialog(cam) {
+    document.getElementById("dialogTitle").textContent = cam ? "Edit camera" : "Add camera";
+    document.getElementById("cameraId").value = cam ? cam.id : "";
+    document.getElementById("fName").value = cam ? cam.name : "";
+    document.getElementById("fGroup").value = cam ? (cam.group || "") : "";
+    document.getElementById("fRtsp").value = cam ? cam.rtsp_url : "";
+    document.getElementById("fRtspSub").value = "";
+    document.getElementById("fUser").value = "";
+    document.getElementById("fPass").value = "";
+    document.getElementById("fMode").value = cam ? cam.recording_mode : "off";
+    document.getElementById("fMotion").checked = cam ? cam.motion_enabled : false;
+    dialog.showModal();
+  }
+
+  document.getElementById("addCameraBtn").addEventListener("click", () => openDialog(null));
+  document.getElementById("cancelDialog").addEventListener("click", () => dialog.close());
+
+  document.getElementById("cameraForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const id = document.getElementById("cameraId").value;
+    const payload = {
+      name: document.getElementById("fName").value,
+      group: document.getElementById("fGroup").value || null,
+      protocol: "rtsp",
+      rtsp_url: document.getElementById("fRtsp").value,
+      rtsp_substream_url: document.getElementById("fRtspSub").value || null,
+      username: document.getElementById("fUser").value || null,
+      password: document.getElementById("fPass").value || null,
+      recording_mode: document.getElementById("fMode").value,
+      motion_enabled: document.getElementById("fMotion").checked,
+      enabled: true,
+    };
+    try {
+      if (id) {
+        await PiNVR.api(`/cameras/${id}`, { method: "PUT", body: payload });
+      } else {
+        await PiNVR.api("/cameras", { method: "POST", body: payload });
+      }
+      dialog.close();
+      PiNVR.toast("Camera saved");
+      loadCameras();
+    } catch (err) { PiNVR.toast(err.message, true); }
+  });
+
+  body.addEventListener("click", async (e) => {
+    const editData = e.target.getAttribute("data-edit");
+    const deleteId = e.target.getAttribute("data-delete");
+    if (editData) openDialog(JSON.parse(editData));
+    if (deleteId) {
+      if (!confirm("Delete this camera and its recordings history?")) return;
+      try {
+        await PiNVR.api(`/cameras/${deleteId}`, { method: "DELETE" });
+        PiNVR.toast("Camera deleted");
+        loadCameras();
+      } catch (err) { PiNVR.toast(err.message, true); }
+    }
+  });
+
+  document.getElementById("discoverBtn").addEventListener("click", async () => {
+    PiNVR.toast("Scanning the LAN for ONVIF cameras…");
+    try {
+      const result = await PiNVR.api("/cameras/discover", { method: "POST" });
+      if (!result.devices.length) {
+        PiNVR.toast("No ONVIF devices found");
+        return;
+      }
+      PiNVR.toast(`Found ${result.devices.length} device(s) — check console`);
+      console.log("Discovered ONVIF devices:", result.devices);
+    } catch (err) { PiNVR.toast(err.message, true); }
+  });
+
+  loadCameras();
+</script>
+{% endblock %}

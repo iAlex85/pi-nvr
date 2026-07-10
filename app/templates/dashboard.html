@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Pi-NVR{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+{% block content %}
+<div class="card-grid" id="statCards">
+  <div class="card stat-card"><div class="label">Cameras online</div><div class="value accent" id="statCamerasOnline">--</div></div>
+  <div class="card stat-card"><div class="label">Recording now</div><div class="value" id="statRecording">--</div></div>
+  <div class="card stat-card"><div class="label">Motion events today</div><div class="value" id="statMotionToday">--</div></div>
+  <div class="card stat-card"><div class="label">Current bitrate</div><div class="value" id="statBitrate">--</div></div>
+  <div class="card stat-card"><div class="label">Storage free</div><div class="value" id="statDiskFree">--</div></div>
+  <div class="card stat-card"><div class="label">Uptime</div><div class="value" id="statUptime">--</div></div>
+</div>
+
+<div class="section-title">Cameras</div>
+<div class="camera-grid" id="dashCameraGrid"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+  function fmtBytes(n) {
+    if (n == null) return "--";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return `${n.toFixed(1)} ${units[i]}`;
+  }
+  function fmtUptime(seconds) {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    return `${days}d ${hours}h`;
+  }
+
+  async function loadDashboard() {
+    try {
+      const stats = await PiNVR.api("/system/stats");
+      document.getElementById("statCamerasOnline").textContent = `${stats.cameras.online}/${stats.cameras.total}`;
+      document.getElementById("statRecording").textContent = stats.cameras.recording;
+      document.getElementById("statMotionToday").textContent = stats.motion_events_today;
+      document.getElementById("statBitrate").textContent = `${(stats.current_bitrate_kbps / 1000).toFixed(2)} Mbps`;
+      document.getElementById("statDiskFree").textContent = fmtBytes(stats.system.disk.free_bytes);
+      document.getElementById("statUptime").textContent = fmtUptime(stats.system.uptime_seconds);
+    } catch (e) { PiNVR.toast(e.message, true); }
+
+    try {
+      const [cameras, statusMap] = await Promise.all([
+        PiNVR.api("/cameras"),
+        PiNVR.api("/cameras/status/all"),
+      ]);
+      const grid = document.getElementById("dashCameraGrid");
+      grid.innerHTML = "";
+      cameras.forEach((cam) => {
+        const s = statusMap[cam.id] || {};
+        const tile = document.createElement("div");
+        tile.className = "camera-tile";
+        tile.innerHTML = `
+          <img src="/api/playback/snapshot/${cam.id}/latest" alt="${cam.name}" loading="lazy"
+               onerror="this.style.opacity=0.15" />
+          <div class="tile-label">
+            ${cam.name}
+            <span class="badge ${s.online ? "badge-online" : "badge-offline"}">${s.online ? "ONLINE" : "OFFLINE"}</span>
+          </div>`;
+        grid.appendChild(tile);
+      });
+    } catch (e) { PiNVR.toast(e.message, true); }
+  }
+
+  loadDashboard();
+  setInterval(loadDashboard, 15000);
+</script>
+{% endblock %}

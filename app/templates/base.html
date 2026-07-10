@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Pi-NVR{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="shell">
+    <!-- Status rail: signature element. One dot per known camera, glows
+         amber when online, pulses when actively recording, dims red when
+         offline. Populated/updated by app.js from /api/cameras/status/all -->
+    <aside class="rail" id="statusRail" aria-label="Camera status rail"></aside>
+
+    <nav class="sidenav">
+      <div class="brand">
+        <span class="brand-mark">◉</span>
+        <span class="brand-text">PI&#8209;NVR</span>
+      </div>
+      <a href="/dashboard" class="nav-link" data-path="/dashboard">
+        <span class="nav-icon">▦</span><span>Dashboard</span>
+      </a>
+      <a href="/live" class="nav-link" data-path="/live">
+        <span class="nav-icon">◎</span><span>Live view</span>
+      </a>
+      <a href="/playback" class="nav-link" data-path="/playback">
+        <span class="nav-icon">▶</span><span>Playback</span>
+      </a>
+      <a href="/cameras" class="nav-link" data-path="/cameras">
+        <span class="nav-icon">⌂</span><span>Cameras</span>
+      </a>
+      <a href="/storage" class="nav-link" data-path="/storage">
+        <span class="nav-icon">▤</span><span>Storage</span>
+      </a>
+      <a href="/settings" class="nav-link" data-path="/settings">
+        <span class="nav-icon">⚙</span><span>Settings</span>
+      </a>
+      <div class="sidenav-spacer"></div>
+      <button class="nav-link nav-logout" id="logoutBtn" type="button">
+        <span class="nav-icon">⏻</span><span>Log out</span>
+      </button>
+    </nav>
+
+    <div class="main">
+      <header class="topbar">
+        <div class="topbar-title">{% block page_title %}{% endblock %}</div>
+        <div class="topbar-stats" id="topbarStats">
+          <span class="stat-readout" data-stat="cpu">CPU --%</span>
+          <span class="stat-readout" data-stat="ram">RAM --%</span>
+          <span class="stat-readout" data-stat="temp">--&deg;C</span>
+          <span class="stat-readout" data-stat="disk">DISK --%</span>
+        </div>
+      </header>
+
+      <main class="content">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+
+  <div id="toastRoot" class="toast-root" aria-live="polite"></div>
+
+  <script src="/static/js/app.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

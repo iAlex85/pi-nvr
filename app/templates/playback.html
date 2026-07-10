@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Playback — Pi-NVR{% endblock %}
+{% block page_title %}Playback{% endblock %}
+{% block content %}
+<div style="display:grid; grid-template-columns: 260px 1fr; gap:20px;">
+  <div class="card">
+    <div class="field">
+      <label for="cameraSelect">Camera</label>
+      <select id="cameraSelect"></select>
+    </div>
+    <div class="field">
+      <label for="monthSelect">Month</label>
+      <input id="monthSelect" type="month" />
+    </div>
+    <div id="calendarDays"></div>
+    <div class="section-title">Filter</div>
+    <div class="field">
+      <label for="filterType">Show</label>
+      <select id="filterType">
+        <option value="all">All recordings</option>
+        <option value="motion">Motion only</option>
+      </select>
+    </div>
+  </div>
+
+  <div>
+    <video id="player" controls style="width:100%; background:#000; border-radius:3px; margin-bottom:14px;"></video>
+    <table id="recordingsTable">
+      <thead><tr><th>Started</th><th>Trigger</th><th>Duration</th><th>Size</th><th></th></tr></thead>
+      <tbody id="recordingsBody"></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/playback.js"></script>
+{% endblock %}

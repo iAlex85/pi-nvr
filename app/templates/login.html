@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign in — Pi-NVR</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="card login-card">
+      <div class="login-brand">
+        <span class="brand-mark">◉</span>
+        <span class="brand-text">PI&#8209;NVR</span>
+      </div>
+      <form id="loginForm">
+        <div class="field">
+          <label for="username">Username</label>
+          <input id="username" name="username" autocomplete="username" required />
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required />
+        </div>
+        <div class="field" style="display:flex; align-items:center; gap:8px;">
+          <input id="remember" type="checkbox" style="width:auto;" />
+          <label for="remember" style="margin:0;">Remember me</label>
+        </div>
+        <button class="btn btn-primary" type="submit" style="width:100%; justify-content:center;">Sign in</button>
+        <div class="login-error" id="loginError"></div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById("loginForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById("loginError");
+      errorEl.textContent = "";
+      const username = document.getElementById("username").value;
+      const password = document.getElementById("password").value;
+      const remember_me = document.getElementById("remember").checked;
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password, remember_me }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          errorEl.textContent = body.detail || "Sign in failed";
+          return;
+        }
+        window.location.href = "/dashboard";
+      } catch (err) {
+        errorEl.textContent = "Could not reach the server";
+      }
+    });
+  </script>
+</body>
+</html>

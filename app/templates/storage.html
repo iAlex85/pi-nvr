@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Storage — Pi-NVR{% endblock %}
+{% block page_title %}Storage{% endblock %}
+{% block content %}
+<div class="section-title">Storage targets</div>
+<table>
+  <thead><tr><th>Name</th><th>Path</th><th>Kind</th><th>Default</th><th>Usage</th><th></th></tr></thead>
+  <tbody id="targetsBody"></tbody>
+</table>
+
+<div style="margin-top:20px;">
+  <button class="btn btn-primary" id="browseBtn">Browse for storage location</button>
+  <button class="btn" id="cleanupBtn">Clean up now</button>
+</div>
+
+<div id="browseResults" class="section-title" style="display:none;">Available locations</div>
+<table id="browseTable" style="display:none;">
+  <thead><tr><th>Path</th><th>Type</th><th>Free / Total</th><th></th></tr></thead>
+  <tbody id="browseBody"></tbody>
+</table>
+{% endblock %}
+{% block scripts %}
+<script>
+  function fmtBytes(n) {
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return `${n.toFixed(1)} ${units[i]}`;
+  }
+
+  async function loadTargets() {
+    try {
+      const targets = await PiNVR.api("/storage/targets");
+      const body = document.getElementById("targetsBody");
+      body.innerHTML = await Promise.all(targets.map(async (t) => {
+        let usage = "--";
+        try {
+          const u = await PiNVR.api(`/storage/targets/${t.id}/usage`);
+          usage = `${u.used_percent}% used (${fmtBytes(u.free_bytes)} free)`;
+        } catch (_) {}
+        return `<tr>
+          <td>${t.name}</td><td>${t.path}</td><td>${t.kind}</td>
+          <td>${t.is_default ? "✓" : ""}</td><td>${usage}</td>
+          <td><button class="btn btn-danger" data-delete="${t.id}" style="padding:4px 8px;">Delete</button></td>
+        </tr>`;
+      })).then((rows) => rows.join("")) || `<tr><td colspan="6">No storage targets yet.</td></tr>`;
+    } catch (e) { PiNVR.toast(e.message, true); }
+  }
+
+  document.getElementById("targetsBody").addEventListener("click", async (e) => {
+    const id = e.target.getAttribute("data-delete");
+    if (!id) return;
+    try {
+      await PiNVR.api(`/storage/targets/${id}`, { method: "DELETE" });
+      loadTargets();
+    } catch (err) { PiNVR.toast(err.message, true); }
+  });
+
+  document.getElementById("browseBtn").addEventListener("click", async () => {
+    try {
+      const mounts = await PiNVR.api("/storage/browse");
+      document.getElementById("browseResults").style.display = "block";
+      const table = document.getElementById("browseTable");
+      table.style.display = "table";
+      document.getElementById("browseBody").innerHTML = mounts.map((m) => `
+        <tr>
+          <td>${m.path}</td>
+          <td>${m.is_removable ? "Removable" : "Local"} (${m.filesystem})</td>
+          <td>${fmtBytes(m.free_bytes)} / ${fmtBytes(m.total_bytes)}</td>
+          <td><button class="btn" data-use="${m.path}" style="padding:4px 8px;">Use this</button></td>
+        </tr>`).join("");
+    } catch (e) { PiNVR.toast(e.message, true); }
+  });
+
+  document.getElementById("browseBody").addEventListener("click", async (e) => {
+    const path = e.target.getAttribute("data-use");
+    if (!path) return;
+    const name = prompt("Name for this storage target:", path.split("/").pop());
+    if (!name) return;
+    try {
+      await PiNVR.api("/storage/targets", { method: "POST", body: { name, path, kind: "local" } });
+      PiNVR.toast("Storage target added");
+      loadTargets();
+    } catch (err) { PiNVR.toast(err.message, true); }
+  });
+
+  document.getElementById("cleanupBtn").addEventListener("click", async () => {
+    try {
+      await PiNVR.api("/storage/cleanup-now", { method: "POST" });
+      PiNVR.toast("Retention cleanup started");
+    } catch (err) { PiNVR.toast(err.message, true); }
+  });
+
+  loadTargets();
+</script>
+{% endblock %}

@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Settings — Pi-NVR{% endblock %}
+{% block page_title %}Settings{% endblock %}
+{% block content %}
+<div class="section-title">Account</div>
+<div class="card" style="max-width:420px; margin-bottom:24px;">
+  <form id="passwordForm">
+    <div class="field"><label>Current password</label><input type="password" id="curPass" required /></div>
+    <div class="field"><label>New password (min 8 characters)</label><input type="password" id="newPass" minlength="8" required /></div>
+    <button class="btn btn-primary" type="submit">Change password</button>
+  </form>
+</div>
+
+<div class="section-title">System</div>
+<div class="card" style="max-width:420px; margin-bottom:24px; display:flex; flex-direction:column; gap:10px; align-items:flex-start;">
+  <button class="btn" id="restartServiceBtn">Restart Pi-NVR service</button>
+  <button class="btn btn-danger" id="restartDeviceBtn">Restart Raspberry Pi</button>
+  <button class="btn btn-danger" id="shutdownDeviceBtn">Shut down Raspberry Pi</button>
+</div>
+
+<div class="section-title">Backup &amp; restore</div>
+<div class="card" style="max-width:420px; margin-bottom:24px; display:flex; flex-direction:column; gap:10px; align-items:flex-start;">
+  <a class="btn" href="/api/system/backup">Export configuration backup</a>
+  <form id="restoreForm" style="display:flex; gap:8px; align-items:center;">
+    <input type="file" id="restoreFile" accept=".tar.gz" />
+    <button class="btn" type="submit">Restore</button>
+  </form>
+</div>
+
+<div class="section-title">Logs</div>
+<div class="card">
+  <div style="margin-bottom:10px;"><a class="btn" href="/api/system/logs/download">Download full log</a></div>
+  <table>
+    <thead><tr><th>Time</th><th>Level</th><th>Category</th><th>Message</th></tr></thead>
+    <tbody id="logsBody"></tbody>
+  </table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  document.getElementById("passwordForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await PiNVR.api("/auth/change-password", {
+        method: "POST",
+        body: {
+          current_password: document.getElementById("curPass").value,
+          new_password: document.getElementById("newPass").value,
+        },
+      });
+      PiNVR.toast("Password changed");
+      e.target.reset();
+    } catch (err) { PiNVR.toast(err.message, true); }
+  });
+
+  async function confirmAction(message, path) {
+    if (!confirm(message)) return;
+    try {
+      await PiNVR.api(path, { method: "POST" });
+      PiNVR.toast("Command sent");
+    } catch (err) { PiNVR.toast(err.message, true); }
+  }
+
+  document.getElementById("restartServiceBtn").addEventListener("click", () =>
+    confirmAction("Restart the Pi-NVR service now?", "/system/restart-service"));
+  document.getElementById("restartDeviceBtn").addEventListener("click", () =>
+    confirmAction("Restart the Raspberry Pi now? All recording will pause briefly.", "/system/restart-device"));
+  document.getElementById("shutdownDeviceBtn").addEventListener("click", () =>
+    confirmAction("Shut down the Raspberry Pi? You'll need physical/remote power access to turn it back on.", "/system/shutdown-device"));
+
+  document.getElementById("restoreForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const file = document.getElementById("restoreFile").files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res = await fetch("/api/system/restore", { method: "POST", body: formData, credentials: "same-origin" });
+      if (!res.ok) throw new Error((await res.json()).detail || "Restore failed");
+      PiNVR.toast("Restored — restart the service to apply");
+    } catch (err) { PiNVR.toast(err.message, true); }
+  });
+
+  async function loadLogs() {
+    try {
+      const logs = await PiNVR.api("/system/logs?limit=100");
+      document.getElementById("logsBody").innerHTML = logs.map((l) => `
+        <tr><td>${new Date(l.timestamp).toLocaleString()}</td><td>${l.level}</td><td>${l.category}</td><td>${l.message}</td></tr>
+      `).join("") || `<tr><td colspan="4" style="color:var(--text-faint);">No log entries yet.</td></tr>`;
+    } catch (e) { PiNVR.toast(e.message, true); }
+  }
+  loadLogs();
+</script>
+{% endblock %}
