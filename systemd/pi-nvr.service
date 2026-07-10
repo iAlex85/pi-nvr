@@ -1,0 +1,29 @@
+[Unit]
+Description=Pi-NVR - lightweight CCTV network video recorder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+Group=__SERVICE_USER__
+WorkingDirectory=__INSTALL_PREFIX__
+EnvironmentFile=__ENV_FILE__
+ExecStart=__INSTALL_PREFIX__/venv/bin/python3 -m app.main
+Restart=on-failure
+RestartSec=5
+
+# Hardening. Not exhaustive, but meaningfully reduces blast radius given
+# this process shells out to ffmpeg and touches removable storage.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=__INSTALL_PREFIX__ /etc/pi-nvr /media /mnt /run/media
+ProtectHome=true
+
+# ffmpeg subprocesses + a handful of concurrent camera streams can open
+# many file descriptors; raise the default limit.
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

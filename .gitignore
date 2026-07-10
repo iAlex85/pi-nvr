@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Pi-NVR runtime data (never commit recordings, DB, logs, or local config)
+database/*.db
+database/*.db-*
+recordings/
+logs/
+config/config.yaml
+config/schedules/*.json
+*.tar.gz
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Test artifacts
+.coverage
+htmlcov/

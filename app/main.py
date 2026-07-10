@@ -140,3 +140,27 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+if __name__ == "__main__":
+    # Allows `python3 -m app.main` (used by systemd) to honor the
+    # server.host/server.port/server.https_* settings from config.yaml,
+    # rather than hardcoding them on a uvicorn command line where the
+    # Settings > Network page's changes would silently have no effect.
+    import uvicorn
+
+    cfg = get_config()
+    uvicorn_kwargs = {
+        "host": cfg.get("server.host", "0.0.0.0"),
+        "port": cfg.get("server.port", 8080),
+    }
+    if cfg.get("server.https_enabled", False):
+        cert = cfg.get("server.https_cert", "")
+        key = cfg.get("server.https_key", "")
+        if cert and key:
+            uvicorn_kwargs["ssl_certfile"] = cert
+            uvicorn_kwargs["ssl_keyfile"] = key
+        else:
+            logger.warning("https_enabled is true but https_cert/https_key are not set; starting HTTP only")
+
+    uvicorn.run("app.main:app", **uvicorn_kwargs)
