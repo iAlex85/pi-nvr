@@ -126,7 +126,8 @@ install_systemd_service() {
 
 create_admin_account() {
   log "Create the initial admin account (no default password is shipped):"
-  sudo -u "$SERVICE_USER" "$INSTALL_PREFIX/venv/bin/python3" "$INSTALL_PREFIX/scripts/create_admin.py"
+  sudo -u "$SERVICE_USER" env PI_NVR_CONFIG="$CONFIG_DIR/config.yaml" \
+    "$INSTALL_PREFIX/venv/bin/python3" "$INSTALL_PREFIX/scripts/create_admin.py"
 }
 
 start_service() {
