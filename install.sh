@@ -40,13 +40,12 @@ detect_platform() {
 }
 
 install_system_dependencies() {
-  log "Installing system packages (ffmpeg, python3-venv, sqlite3, nginx)..."
+  log "Installing system packages (ffmpeg, python3-venv, sqlite3)..."
   apt-get update -qq
   apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip \
     ffmpeg \
     sqlite3 \
-    nginx \
     git curl ca-certificates
 }
 

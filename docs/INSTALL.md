@@ -10,7 +10,7 @@ sudo ./install.sh
 
 What it does, in order:
 
-1. Installs `ffmpeg`, `python3-venv`, `sqlite3`, `nginx` via `apt`.
+1. Installs `ffmpeg`, `python3-venv`, `sqlite3` via `apt`.
 2. Creates a dedicated, unprivileged `pi-nvr` system user.
 3. Copies the application to `/opt/pi-nvr`.
 4. Creates a Python virtualenv at `/opt/pi-nvr/venv` and installs

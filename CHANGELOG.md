@@ -5,6 +5,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+- Removed the unused `nginx` dependency from `install.sh`. Pi-NVR is served
+  directly by Uvicorn and never used nginx as a reverse proxy; leaving it
+  installed only caused unnecessary port 80 conflicts with other services
+  (e.g. AdGuard Home) that legitimately need that port.
+
 ## [0.1.0] - Initial release
 
 ### Added
