@@ -18,7 +18,17 @@ RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=__INSTALL_PREFIX__ /etc/pi-nvr /media /mnt /run/media
+# The install prefix and config dir must exist -- if they don't, something
+# is genuinely wrong and the service should fail loudly. The removable-
+# media mount points are prefixed with "-" because they're optional: on a
+# fresh Raspberry Pi OS install, /media, /mnt, and especially /run/media
+# often don't exist yet (no USB drive has ever been plugged in), and
+# systemd's ReadWritePaths fails the entire sandbox setup (exit code
+# 226/NAMESPACE) if a listed path is missing and not marked optional.
+ReadWritePaths=__INSTALL_PREFIX__ /etc/pi-nvr
+ReadWritePaths=-/media
+ReadWritePaths=-/mnt
+ReadWritePaths=-/run/media
 ProtectHome=true
 
 # ffmpeg subprocesses + a handful of concurrent camera streams can open
