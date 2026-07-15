@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_admin, get_current_user
-from app.cameras import onvif_discovery, ptz as ptz_mod
+from app.cameras import onvif_discovery, network_scan, ptz as ptz_mod
 from app.cameras.crypto import decrypt, encrypt
 from app.database import get_db
 from app.models import Camera, CameraProtocol, PTZPreset, RecordingMode, User
@@ -184,6 +184,18 @@ def all_camera_status(request: Request, user: User = Depends(get_current_user)):
 async def discover_cameras(user: User = Depends(require_admin)):
     devices = await onvif_discovery.discover()
     return {"devices": [d.to_dict() for d in devices]}
+
+
+@router.post("/scan-network")
+async def scan_network(user: User = Depends(require_admin)):
+    """Fallback for cameras that don't answer ONVIF WS-Discovery (common
+    with budget consumer cameras that only support a vendor's proprietary
+    app-pairing protocol). Sweeps the Pi's LAN subnet(s) for hosts with
+    camera-typical ports open (RTSP/ONVIF/HTTP) so at least the *IP* is
+    known, even if the exact stream path still needs to be found manually.
+    Can take several seconds on a full /24."""
+    results = await network_scan.scan_for_cameras()
+    return {"hosts": results}
 
 
 # --------------------------------------------------------------------------

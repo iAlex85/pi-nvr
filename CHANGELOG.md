@@ -5,6 +5,16 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Network scan** as a fallback camera-finding method (Cameras page, next
+  to "Discover (ONVIF)"). Many budget consumer cameras don't implement
+  standard ONVIF WS-Discovery at all -- only a vendor's proprietary
+  cloud/app-pairing protocol. This sweeps the Pi's own LAN subnet(s) for
+  hosts with camera-typical ports open (RTSP 554, ONVIF 8899, HTTP 80/8080)
+  so at least the camera's IP is confirmed, even when the exact stream
+  path and credentials still have to come from the camera's app/manual.
+  Automatically excludes the Tailscale interface and loopback.
+
 ### Fixed
 - ONVIF discovery (`POST /api/cameras/discover`) crashed with a 500 error
   whenever any camera actually responded to the probe: it used

@@ -28,6 +28,7 @@ truth for exact request/response schemas.
 | GET | `/{id}/status` | Live connection status |
 | GET | `/status/all` | Status for every camera, keyed by id |
 | POST | `/discover` | ONVIF WS-Discovery scan of the LAN (admin) |
+| POST | `/scan-network` | Fallback LAN sweep for hosts with RTSP/ONVIF/HTTP ports open, for cameras that don't answer ONVIF discovery (admin) |
 | GET | `/{id}/mjpeg` | MJPEG live-view stream (multipart/x-mixed-replace) |
 | POST | `/{id}/ptz/detect` | Probe + persist whether the camera supports PTZ |
 | POST | `/{id}/ptz/move` | `{direction, speed}` — direction one of up/down/left/right/zoom_in/zoom_out |
