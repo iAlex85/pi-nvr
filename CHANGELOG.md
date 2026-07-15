@@ -11,6 +11,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   `loop.sock_recv()`, which returns only the received bytes, but the code
   tried to unpack that into `(data, addr)` as if it were `sock_recvfrom()`.
   Fixed to call `sock_recvfrom()`, which actually returns both.
+
+### Changed
 - Removed the unused `nginx` dependency from `install.sh`. Pi-NVR is served
   directly by Uvicorn and never used nginx as a reverse proxy; leaving it
   installed only caused unnecessary port 80 conflicts with other services
