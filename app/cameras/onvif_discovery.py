@@ -85,7 +85,7 @@ async def discover(timeout_seconds: float = 4.0) -> list[DiscoveredDevice]:
             remaining = end_time - loop.time()
             try:
                 data, addr = await asyncio.wait_for(
-                    loop.sock_recv(sock, 65535), timeout=max(remaining, 0.01)
+                    loop.sock_recvfrom(sock, 65535), timeout=max(remaining, 0.01)
                 )
             except asyncio.TimeoutError:
                 break
