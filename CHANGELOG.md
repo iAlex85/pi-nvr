@@ -10,6 +10,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   directly by Uvicorn and never used nginx as a reverse proxy; leaving it
   installed only caused unnecessary port 80 conflicts with other services
   (e.g. AdGuard Home) that legitimately need that port.
+- Replaced `passlib`'s bcrypt wrapper with a direct call to the `bcrypt`
+  library. `passlib` has been unmaintained since 2020 and its backend
+  detection breaks on modern `bcrypt` releases (removed `__about__`
+  attribute), surfacing as a misleading "password cannot be longer than 72
+  bytes" crash during admin account creation. Password length is now
+  validated explicitly (max 72 bytes, bcrypt's real hard limit) at the API
+  and `create_admin.py` before hashing, instead of failing deep inside a
+  broken compatibility shim.
 
 ## [0.1.0] - Initial release
 

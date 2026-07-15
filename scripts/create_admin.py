@@ -38,6 +38,9 @@ def main() -> int:
     if len(password) < 8:
         print("Password must be at least 8 characters.")
         return 1
+    if len(password.encode("utf-8")) > 72:
+        print("Password must be at most 72 bytes (bcrypt's hard limit).")
+        return 1
     confirm = getpass.getpass("Confirm password: ")
     if password != confirm:
         print("Passwords do not match.")
