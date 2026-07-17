@@ -64,6 +64,28 @@ def _extract_scope(scopes: str, key: str) -> str | None:
     return None
 
 
+class _DiscoveryProtocol(asyncio.DatagramProtocol):
+    """Collects WS-Discovery probe responses as they arrive.
+
+    Uses the transport/protocol UDP pattern (via
+    loop.create_datagram_endpoint) rather than the lower-level
+    loop.sock_sendto/sock_recvfrom methods. This matters because uvloop
+    -- the faster event loop uvicorn[standard] installs and runs by
+    default in production -- does not implement sock_sendto, and raises
+    NotImplementedError. create_datagram_endpoint is implemented by both
+    the default asyncio loop and uvloop, so this works under either.
+    """
+
+    def __init__(self):
+        self.responses: list[tuple[bytes, tuple]] = []
+
+    def datagram_received(self, data: bytes, addr: tuple) -> None:
+        self.responses.append((data, addr))
+
+    def error_received(self, exc: Exception) -> None:  # noqa: D401
+        pass  # Best-effort discovery; a single bad datagram shouldn't abort the scan.
+
+
 async def discover(timeout_seconds: float = 4.0) -> list[DiscoveredDevice]:
     """Broadcast a WS-Discovery probe and collect responses for
     `timeout_seconds`. Returns one entry per unique XAddr."""
@@ -74,21 +96,18 @@ async def discover(timeout_seconds: float = 4.0) -> list[DiscoveredDevice]:
     sock.setblocking(False)
     sock.bind(("", 0))
 
-    message = PROBE_TEMPLATE.format(message_id=uuid.uuid4())
-    await loop.sock_sendto(sock, message.encode("utf-8"), (MULTICAST_ADDR, MULTICAST_PORT))
+    transport, protocol = await loop.create_datagram_endpoint(
+        _DiscoveryProtocol, sock=sock
+    )
 
     devices: dict[str, DiscoveredDevice] = {}
-    end_time = loop.time() + timeout_seconds
-
     try:
-        while loop.time() < end_time:
-            remaining = end_time - loop.time()
-            try:
-                data, addr = await asyncio.wait_for(
-                    loop.sock_recvfrom(sock, 65535), timeout=max(remaining, 0.01)
-                )
-            except asyncio.TimeoutError:
-                break
+        message = PROBE_TEMPLATE.format(message_id=uuid.uuid4())
+        transport.sendto(message.encode("utf-8"), (MULTICAST_ADDR, MULTICAST_PORT))
+
+        await asyncio.sleep(timeout_seconds)
+
+        for data, addr in protocol.responses:
             text = data.decode("utf-8", errors="replace")
             xaddr_match = XADDR_RE.search(text)
             scopes_match = SCOPES_RE.search(text)
@@ -97,6 +116,6 @@ async def discover(timeout_seconds: float = 4.0) -> list[DiscoveredDevice]:
                 scopes = scopes_match.group(1).strip() if scopes_match else ""
                 devices[xaddr] = DiscoveredDevice(xaddr, scopes, addr[0])
     finally:
-        sock.close()
+        transport.close()
 
     return list(devices.values())

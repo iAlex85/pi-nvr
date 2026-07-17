@@ -16,6 +16,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Fixed
+- ONVIF discovery crashed with `NotImplementedError` under production
+  conditions: it used `loop.sock_sendto()`/`loop.sock_recvfrom()`, which
+  the default asyncio event loop implements but `uvloop` (installed and
+  used by default via `uvicorn[standard]`, i.e. what actually runs in
+  production) does not. Rewrote discovery to use
+  `loop.create_datagram_endpoint()` with a `DatagramProtocol`, which both
+  event loop implementations support correctly.
 - Two flaky/incorrect tests caught by CI: `test_session_token_expired` relied
   on a 1.1s sleep vs 1s max_age, which the signer's whole-second time
   resolution could round away depending on phase alignment; now sleeps
