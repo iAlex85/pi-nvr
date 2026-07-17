@@ -16,6 +16,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Fixed
+- CI lint failures: removed unused imports (`os` in `storage/manager.py` and
+  `tests/conftest.py`, `threading` in `camera_simulator.py`), replaced a
+  lambda assignment with a proper `def` (PEP 8 E731), and raised flake8's
+  line-length limit from 110 to 140 to match how FastAPI route signatures
+  with multiple `Depends()` parameters actually look in this codebase,
+  rather than fighting the style checker on every route.
 - ONVIF discovery (`POST /api/cameras/discover`) crashed with a 500 error
   whenever any camera actually responded to the probe: it used
   `loop.sock_recv()`, which returns only the received bytes, but the code

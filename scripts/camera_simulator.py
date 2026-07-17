@@ -33,7 +33,6 @@ import socketserver
 import subprocess
 import sys
 import tempfile
-import threading
 from pathlib import Path
 
 
@@ -52,7 +51,8 @@ def generate_test_clip(out_path: Path, duration: int = 30) -> None:
 
 
 def serve_over_http(directory: Path, port: int) -> None:
-    handler = lambda *a, **kw: http.server.SimpleHTTPRequestHandler(*a, directory=str(directory), **kw)
+    def handler(*args, **kwargs):
+        return http.server.SimpleHTTPRequestHandler(*args, directory=str(directory), **kwargs)
     with socketserver.TCPServer(("0.0.0.0", port), handler) as httpd:
         print(f"Serving simulated camera clip at http://0.0.0.0:{port}/clip.mp4")
         print("(Point a camera's RTSP URL at MediaMTX if you need real RTSP; "

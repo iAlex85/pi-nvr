@@ -47,4 +47,4 @@ jobs:
       - name: Install flake8
         run: pip install flake8
       - name: Lint
-        run: flake8 app tests scripts --max-line-length=110 --extend-ignore=E203,W503
+        run: flake8 app tests scripts
