@@ -16,6 +16,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Fixed
+- Two flaky/incorrect tests caught by CI: `test_session_token_expired` relied
+  on a 1.1s sleep vs 1s max_age, which the signer's whole-second time
+  resolution could round away depending on phase alignment; now sleeps
+  1.2s against max_age=0, which is safe regardless of phase.
+  `test_ffmpeg_command_uses_encode_when_overlay_enabled` hardcoded
+  `Camera(id=1, ...)`, which could collide with another test's
+  auto-assigned id; now uses the ORM-assigned `camera.id` instead.
 - CI lint failures: removed unused imports (`os` in `storage/manager.py` and
   `tests/conftest.py`, `threading` in `camera_simulator.py`), replaced a
   lambda assignment with a proper `def` (PEP 8 E731), and raised flake8's

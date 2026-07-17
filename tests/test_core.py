@@ -46,11 +46,15 @@ def test_session_token_expired(monkeypatch):
     from app.auth.security import create_session_token, read_session_token
 
     token = create_session_token(user_id=1)
-    # max_age=0 means "expired the instant it was issued" for all practical
-    # purposes once even a few milliseconds pass.
+    # The signer only tracks time at whole-second resolution, so the gap
+    # between "issued" and "checked" must be large enough that no phase
+    # alignment (e.g. issued at x.999s) can round down to an apparent age
+    # that isn't strictly greater than max_age. Sleeping >1s with
+    # max_age=0 guarantees this regardless of when within a second the
+    # token was actually issued.
     import time
-    time.sleep(1.1)
-    payload = read_session_token(token, max_age_seconds=1)
+    time.sleep(1.2)
+    payload = read_session_token(token, max_age_seconds=0)
     assert payload is None
 
 

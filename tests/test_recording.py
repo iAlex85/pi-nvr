@@ -25,14 +25,14 @@ def test_ffmpeg_command_uses_encode_when_overlay_enabled(tmp_project, db_session
     from app.recording.engine import RecordingEngine
     from app.models import Camera, CameraProtocol, RecordingMode
 
-    camera = Camera(id=1, name="Test Cam", protocol=CameraProtocol.rtsp, rtsp_url="rtsp://x")
+    camera = Camera(name="Test Cam", protocol=CameraProtocol.rtsp, rtsp_url="rtsp://x")
     db_session.add(camera)
     db_session.flush()
     db_session.commit()
 
     cfg = Config(tmp_project / "config.yaml")
     engine = RecordingEngine(cfg, storage_manager=None)
-    cmd = engine._build_ffmpeg_command(1, "rtsp://cam/stream", tmp_project / "out", RecordingMode.continuous)
+    cmd = engine._build_ffmpeg_command(camera.id, "rtsp://cam/stream", tmp_project / "out", RecordingMode.continuous)
 
     assert "libx264" in cmd
     assert "-vf" in cmd
