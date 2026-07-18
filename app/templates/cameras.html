@@ -58,6 +58,11 @@
         <option value="scheduled">Scheduled</option>
       </select>
     </div>
+    <div class="field"><label>Storage target</label>
+      <select id="fStorageTarget">
+        <option value="">Default (local)</option>
+      </select>
+    </div>
     <div class="field" style="display:flex; gap:8px; align-items:center;">
       <input type="checkbox" id="fMotion" style="width:auto;" /><label style="margin:0;" for="fMotion">Enable motion detection</label>
     </div>
@@ -97,6 +102,17 @@
     } catch (e) { PiNVR.toast(e.message, true); }
   }
 
+  async function populateStorageTargets() {
+    const select = document.getElementById("fStorageTarget");
+    try {
+      const targets = await PiNVR.api("/storage/targets");
+      select.innerHTML = `<option value="">Default (local)</option>` +
+        targets.map((t) => `<option value="${t.id}">${t.name}</option>`).join("");
+    } catch (e) {
+      // Storage API unreachable -- leave just the default option rather than block the dialog.
+    }
+  }
+
   function openDialog(cam) {
     document.getElementById("dialogTitle").textContent = cam ? "Edit camera" : "Add camera";
     document.getElementById("cameraId").value = cam ? cam.id : "";
@@ -108,6 +124,9 @@
     document.getElementById("fPass").value = "";
     document.getElementById("fMode").value = cam ? cam.recording_mode : "off";
     document.getElementById("fMotion").checked = cam ? cam.motion_enabled : false;
+    populateStorageTargets().then(() => {
+      document.getElementById("fStorageTarget").value = cam && cam.storage_target_id ? cam.storage_target_id : "";
+    });
     dialog.showModal();
   }
 
@@ -127,6 +146,9 @@
       password: document.getElementById("fPass").value || null,
       recording_mode: document.getElementById("fMode").value,
       motion_enabled: document.getElementById("fMotion").checked,
+      storage_target_id: document.getElementById("fStorageTarget").value
+        ? parseInt(document.getElementById("fStorageTarget").value, 10)
+        : null,
       enabled: true,
     };
     try {

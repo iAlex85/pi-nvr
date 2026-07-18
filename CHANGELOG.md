@@ -20,6 +20,11 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Fixed
+- The Add/Edit Camera dialog had no way to select a storage target at
+  all, even though the backend (`storage_target_id`) fully supported it --
+  every camera silently used the default local storage with no way to
+  point it at a registered USB/SSD/network target from the UI. Added a
+  Storage target dropdown, populated from `/api/storage/targets`.
 - Live view could intermittently go blank or a camera would flicker
   online/offline for no apparent reason, when the health-check probe
   reconnected on its own 15s timer while another connection (live view,
