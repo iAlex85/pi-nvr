@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user, require_admin
-from app.cameras.crypto import decrypt
+from app.cameras.url_utils import build_authenticated_rtsp_url
 from app.database import get_db
 from app.models import Camera, MotionEvent, Recording, User
 
@@ -126,11 +126,7 @@ async def capture_snapshot(camera_id: int, request: Request, db: Session = Depen
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = snapshot_dir / f"cam{camera_id}_{ts}.jpg"
 
-    rtsp_url = camera.rtsp_url
-    if camera.username and camera.password_enc and "@" not in rtsp_url.split("://", 1)[-1]:
-        password = decrypt(camera.password_enc)
-        scheme, rest = rtsp_url.split("://", 1)
-        rtsp_url = f"{scheme}://{camera.username}:{password}@{rest}"
+    rtsp_url = build_authenticated_rtsp_url(camera)
 
     cmd = [
         "ffmpeg", "-y", "-nostdin", "-loglevel", "error",

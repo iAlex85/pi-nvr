@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_admin, get_current_user
 from app.cameras import onvif_discovery, network_scan, ptz as ptz_mod
-from app.cameras.crypto import decrypt, encrypt
+from app.cameras.url_utils import build_authenticated_rtsp_url
+from app.cameras.crypto import encrypt
 from app.database import get_db
 from app.models import Camera, CameraProtocol, PTZPreset, RecordingMode, User
 
@@ -42,6 +43,8 @@ class CameraOut(BaseModel):
     group: str | None
     protocol: CameraProtocol
     rtsp_url: str
+    rtsp_substream_url: str | None
+    username: str | None
     enabled: bool
     recording_mode: RecordingMode
     motion_enabled: bool
@@ -216,11 +219,7 @@ async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(g
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
 
-    rtsp_url = camera.rtsp_substream_url or camera.rtsp_url
-    if camera.username and camera.password_enc and "@" not in rtsp_url.split("://", 1)[-1]:
-        password = decrypt(camera.password_enc)
-        scheme, rest = rtsp_url.split("://", 1)
-        rtsp_url = f"{scheme}://{camera.username}:{password}@{rest}"
+    rtsp_url = build_authenticated_rtsp_url(camera, substream=True)
 
     cmd = [
         "ffmpeg", "-nostdin", "-loglevel", "error",

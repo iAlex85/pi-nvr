@@ -20,6 +20,23 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Fixed
+- **Cameras showed OFFLINE even with correct, working credentials.** The
+  background health-check probe (`CameraManager`) built its RTSP test URL
+  without ever injecting the camera's username/password, so any camera
+  requiring auth would always fail the probe and appear offline --
+  regardless of whether live view, recording, or snapshots (which did
+  authenticate correctly) worked fine. This credential-injection logic was
+  duplicated slightly differently in three separate places (the probe,
+  `RecordingEngine`, and two route handlers); consolidated into one
+  shared `build_authenticated_rtsp_url()` helper in
+  `app/cameras/url_utils.py` used everywhere, so this class of bug can't
+  reoccur from the same URLs drifting out of sync.
+- Editing a camera always cleared its username field even if unchanged,
+  since the API never returned it and the edit dialog always started
+  blank; saving without re-entering it would silently wipe the stored
+  username. `username` is now included in the camera API response (not
+  sensitive) and prefilled on edit; password remains intentionally never
+  returned, with a placeholder clarifying blank = keep current password.
 - ONVIF discovery results were only logged to the browser's developer
   console, invisible to a normal user. Added a proper results table
   (device name, hardware, source IP, service address) matching the

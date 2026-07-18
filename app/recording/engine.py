@@ -28,7 +28,7 @@ import shlex
 from pathlib import Path
 
 from app.config import Config
-from app.cameras.crypto import decrypt
+from app.cameras.url_utils import build_authenticated_rtsp_url
 from app.database import session_scope
 from app.models import Camera, Recording, RecordingMode
 
@@ -86,7 +86,7 @@ class RecordingEngine:
                 return
             output_dir = self.storage.recording_dir_for_camera(camera)
             mode = camera.recording_mode
-            rtsp_url = self._auth_url(camera)
+            rtsp_url = build_authenticated_rtsp_url(camera)
 
         output_dir.mkdir(parents=True, exist_ok=True)
         state = self._states.setdefault(camera_id, _CameraRecordingState(camera_id))
@@ -143,18 +143,6 @@ class RecordingEngine:
                     return
             await self._start_camera(camera_id)
             return  # _start_camera spawns a fresh watcher task
-
-    def _auth_url(self, camera: Camera) -> str:
-        """Inject basic-auth credentials into the RTSP URL if the camera
-        has stored username/password and the URL doesn't already embed
-        credentials."""
-        if "@" in camera.rtsp_url.split("://", 1)[-1]:
-            return camera.rtsp_url
-        password = decrypt(camera.password_enc)
-        if not camera.username or not password:
-            return camera.rtsp_url
-        scheme, rest = camera.rtsp_url.split("://", 1)
-        return f"{scheme}://{camera.username}:{password}@{rest}"
 
     def _build_ffmpeg_command(
         self, camera_id: int, rtsp_url: str, output_dir: Path, mode: RecordingMode

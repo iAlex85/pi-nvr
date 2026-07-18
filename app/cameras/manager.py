@@ -17,6 +17,7 @@ import dataclasses
 import logging
 import time
 
+from app.cameras.url_utils import build_authenticated_rtsp_url
 from app.config import Config
 from app.database import session_scope
 from app.models import Camera
@@ -99,7 +100,7 @@ class CameraManager:
             if camera is None or not camera.enabled:
                 await self.unwatch_camera(camera_id)
                 return
-            rtsp_url = camera.rtsp_url
+            rtsp_url = build_authenticated_rtsp_url(camera)
 
         status = self._status.setdefault(camera_id, CameraStatus(camera_id=camera_id))
 
