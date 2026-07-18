@@ -16,6 +16,11 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Fixed
+- ONVIF discovery results were only logged to the browser's developer
+  console, invisible to a normal user. Added a proper results table
+  (device name, hardware, source IP, service address) matching the
+  network-scan results UI, with a "Use this IP" button to prefill the
+  Add Camera dialog.
 - ONVIF discovery crashed with `NotImplementedError` under production
   conditions: it used `loop.sock_sendto()`/`loop.sock_recvfrom()`, which
   the default asyncio event loop implements but `uvloop` (installed and
