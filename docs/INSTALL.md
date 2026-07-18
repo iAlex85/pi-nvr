@@ -83,6 +83,19 @@ cameras only support UDP, or vice versa):
 ffprobe -rtsp_transport tcp rtsp://user:pass@camera-ip:554/stream1
 ```
 
+**Live view works once, then goes blank, or flickers offline/online**
+Many budget/consumer IP cameras only accept **one RTSP connection at a
+time** -- a second connection attempt doesn't queue, it knocks the first
+one loose or fails outright. If you have the camera's phone app open
+*and* Pi-NVR's live view open *and* recording active all at once, they're
+competing for that single slot. Close the phone app while using Pi-NVR,
+and avoid leaving live view open in a browser tab you're not actually
+watching. Pi-NVR's own background health-check is designed to skip
+re-probing a camera that's already confirmed online via an active
+recording connection, specifically to avoid contributing to this
+contention -- but it can't do anything about other apps also connected to
+the same camera.
+
 **High CPU usage**
 Turn off timestamp/name overlay (Settings > Recording) if enabled — that's
 the one feature that forces a decode+encode instead of a stream copy.

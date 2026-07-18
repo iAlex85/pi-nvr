@@ -20,6 +20,17 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Fixed
+- Live view could intermittently go blank or a camera would flicker
+  online/offline for no apparent reason, when the health-check probe
+  reconnected on its own 15s timer while another connection (live view,
+  an active recording, or the camera's own phone app) already held the
+  camera's single available RTSP client slot -- true of most budget/
+  consumer cameras, which don't support multiple simultaneous RTSP
+  clients. The probe now skips entirely for any camera `RecordingEngine`
+  already confirms is actively recording (conclusive proof of
+  connectivity on its own), and the default probe interval was raised
+  from 15s to 45s to further reduce contention frequency for cameras not
+  currently recording.
 - **Cameras showed OFFLINE even with correct, working credentials.** The
   background health-check probe (`CameraManager`) built its RTSP test URL
   without ever injecting the camera's username/password, so any camera

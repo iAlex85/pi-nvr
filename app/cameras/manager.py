@@ -9,6 +9,18 @@ Reconnection strategy: a background asyncio task per enabled camera probes
 the RTSP URL periodically (cheap `ffprobe`-style connect, not a full pull)
 and flips online/offline state. RecordingEngine and MotionSupervisor watch
 that state to know when to (re)start their own subprocesses.
+
+Many budget/consumer cameras (this includes most "generic Chinese WiFi
+camera" hardware) only accept ONE RTSP client at a time -- a second
+connection attempt doesn't queue, it just fails or knocks the first one
+loose. This matters a lot here: if this probe reconnects on its own timer
+while RecordingEngine or live view already holds the camera's one
+available slot, it can intermittently break an otherwise-working stream
+for no reason. To avoid that, the probe is skipped for any camera the
+RecordingEngine already confirms is actively recording -- an active
+recording connection is itself conclusive proof the camera is online, so
+a second, redundant probe connection is both unnecessary and actively
+harmful on single-client hardware.
 """
 from __future__ import annotations
 
@@ -24,7 +36,7 @@ from app.models import Camera
 
 logger = logging.getLogger("pi_nvr.cameras")
 
-PROBE_INTERVAL_SECONDS = 15
+PROBE_INTERVAL_SECONDS = 45
 PROBE_TIMEOUT_SECONDS = 8
 
 
@@ -45,6 +57,13 @@ class CameraManager:
         self._status: dict[int, CameraStatus] = {}
         self._tasks: dict[int, asyncio.Task] = {}
         self._running = False
+        # Set post-construction from app/main.py's lifespan, once
+        # RecordingEngine exists. Optional by design -- CameraManager must
+        # still work (e.g. in tests) without it wired up.
+        self._recording_engine = None
+
+    def set_recording_engine(self, recording_engine) -> None:
+        self._recording_engine = recording_engine
 
     async def start(self) -> None:
         self._running = True
@@ -95,6 +114,17 @@ class CameraManager:
             await asyncio.sleep(PROBE_INTERVAL_SECONDS)
 
     async def _probe_once(self, camera_id: int) -> None:
+        if self._recording_engine is not None and self._recording_engine.is_recording(camera_id):
+            # Already have conclusive proof of connectivity from an active
+            # recording connection -- skip the redundant probe rather than
+            # risk contending for a single-RTSP-client camera's one slot.
+            status = self._status.setdefault(camera_id, CameraStatus(camera_id=camera_id))
+            status.online = True
+            status.last_seen = time.time()
+            status.last_error = None
+            status.consecutive_failures = 0
+            return
+
         with session_scope() as db:
             camera = db.get(Camera, camera_id)
             if camera is None or not camera.enabled:
