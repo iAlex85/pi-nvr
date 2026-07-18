@@ -6,6 +6,10 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- `scripts/onvif_probe.py`: queries a camera's ONVIF service directly for
+  its real RTSP stream URI(s) via `GetStreamUri`, instead of guessing
+  common path patterns. Useful for cameras that answer ONVIF discovery
+  but whose RTSP path/credentials aren't documented anywhere accessible.
 - **Network scan** as a fallback camera-finding method (Cameras page, next
   to "Discover (ONVIF)"). Many budget consumer cameras don't implement
   standard ONVIF WS-Discovery at all -- only a vendor's proprietary
