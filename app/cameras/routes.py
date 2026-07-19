@@ -238,6 +238,31 @@ async def _kill_process(proc) -> None:
         proc.kill()
 
 
+async def _spawn_mjpeg_process(cmd: list, attempts: int = 3, retry_delay: float = 2.0):
+    """Starts the ffmpeg live-view process, retrying a few times if it
+    exits almost immediately -- typically means the camera hasn't yet
+    released a just-closed connection internally (its own session
+    cleanup can lag behind our process actually exiting), so an instant
+    reconnect gets rejected even though nothing is actually wrong."""
+    last_proc = None
+    for attempt in range(1, attempts + 1):
+        proc = await _asyncio.create_subprocess_exec(
+            *cmd, stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.DEVNULL
+        )
+        try:
+            await _asyncio.wait_for(proc.wait(), timeout=1.5)
+            # Exited almost immediately -- treat as a failed connection
+            # attempt and retry after a short delay, unless out of tries.
+            last_proc = proc
+            if attempt < attempts:
+                await _asyncio.sleep(retry_delay)
+                continue
+        except _asyncio.TimeoutError:
+            # Still running after 1.5s -- looks like it connected fine.
+            return proc
+    return last_proc
+
+
 @router.get("/{camera_id}/mjpeg")
 async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     camera = db.get(Camera, camera_id)
@@ -247,6 +272,10 @@ async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(g
     old_proc = _active_mjpeg_processes.get(camera_id)
     if old_proc is not None:
         await _kill_process(old_proc)
+        # Our process exiting promptly doesn't mean the camera's own
+        # firmware has released its RTSP session slot equally promptly --
+        # give it a moment before trying to reconnect.
+        await _asyncio.sleep(1.5)
 
     rtsp_url = build_authenticated_rtsp_url(camera, substream=True)
 
@@ -257,7 +286,7 @@ async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(g
         "-vf", "scale=640:-2",
         "pipe:1",
     ]
-    proc = await _asyncio.create_subprocess_exec(*cmd, stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.DEVNULL)
+    proc = await _spawn_mjpeg_process(cmd)
     _active_mjpeg_processes[camera_id] = proc
 
     boundary = "pi-nvr-frame"

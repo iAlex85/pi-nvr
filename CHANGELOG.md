@@ -20,6 +20,16 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Fixed
+- Even with the previous fix (killing the old live-view process before
+  starting a new one), reconnecting could still fail on the very first
+  attempt: our `ffmpeg` process exiting promptly doesn't guarantee the
+  camera's own firmware has released its RTSP session slot equally
+  promptly -- some budget camera firmware lags behind actual TCP
+  teardown before it considers a session truly closed. Added a 1.5s
+  settling delay before reconnecting after killing a previous stream,
+  plus a retry mechanism (up to 3 attempts with a short backoff) if the
+  new connection attempt exits almost immediately, which is the
+  signature of hitting this exact race.
 - The previous `request.is_disconnected()` fix for live view wasn't
   sufficient on its own -- browsers don't reliably/promptly close the
   underlying connection for a `multipart/x-mixed-replace` stream on
