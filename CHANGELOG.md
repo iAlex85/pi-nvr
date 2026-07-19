@@ -20,6 +20,19 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Fixed
+- Found the actual root cause of live view staying blank after switching
+  tabs and back, which the previous two server-side fixes didn't address:
+  Safari (and potentially other browsers) can restore the entire Live
+  view page from the **back-forward cache** on navigation instead of
+  reloading it -- meaning no JavaScript re-runs and the browser just
+  displays the frozen last frame of a connection the server had already
+  correctly closed, never issuing a new request at all. The server-side
+  reconnect logic added in the previous two fixes never got a chance to
+  run, because no new request ever arrived. Fixed by listening for the
+  `pageshow` event and forcing a real reload of the live-view tiles when
+  `event.persisted` indicates a back-forward-cache restore, plus
+  cache-busting the image URL and adding explicit `Cache-Control: no-store`
+  response headers as defense-in-depth.
 - Even with the previous fix (killing the old live-view process before
   starting a new one), reconnecting could still fail on the very first
   attempt: our `ffmpeg` process exiting promptly doesn't guarantee the

@@ -336,6 +336,10 @@ async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(g
     return StreamingResponse(
         frame_generator(),
         media_type=f"multipart/x-mixed-replace; boundary={boundary}",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+        },
     )
 
 

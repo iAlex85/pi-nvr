@@ -23,8 +23,12 @@
     visible.forEach((cam) => {
       const tile = document.createElement("div");
       tile.className = "camera-tile";
+      // Cache-bust with a timestamp so this is always a genuinely fresh
+      // request, never something the browser decides to reuse/restore
+      // from cache -- important for a live multipart stream, where a
+      // stale cached "connection" is worse than useless.
       tile.innerHTML = `
-        <img src="/api/cameras/${cam.id}/mjpeg" alt="${cam.name}" />
+        <img src="/api/cameras/${cam.id}/mjpeg?t=${Date.now()}" alt="${cam.name}" />
         <div class="tile-label">
           ${cam.name}
           <button class="btn" data-snapshot="${cam.id}" style="float:right; padding:2px 8px;">Snap</button>
@@ -60,6 +64,20 @@
       grid.requestFullscreen().catch(() => PiNVR.toast("Fullscreen not available", true));
     } else {
       document.exitFullscreen();
+    }
+  });
+
+  // Safari (and other browsers) can restore this entire page from the
+  // back-forward cache on navigation instead of actually reloading it --
+  // meaning none of our JS re-runs and the browser just shows the frozen
+  // last frame of a connection the server already correctly closed. The
+  // `pageshow` event fires on both a normal load AND a bfcache restore;
+  // `event.persisted` tells us which one happened. On a bfcache restore,
+  // force a real re-render so fresh, cache-busted requests actually go
+  // out and hit our reconnect-with-retry logic server-side.
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) {
+      render();
     }
   });
 
