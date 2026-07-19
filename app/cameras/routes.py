@@ -236,7 +236,20 @@ async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(g
         try:
             buffer = b""
             while True:
-                chunk = await proc.stdout.read(4096)
+                if await request.is_disconnected():
+                    # The browser navigated away or closed the tab. Without
+                    # this check, we'd just keep blocking on the next
+                    # ffmpeg read below and never notice -- leaving this
+                    # process (and its one RTSP connection slot on cameras
+                    # that only support a single client) orphaned
+                    # indefinitely, until a new live-view request shows up
+                    # and can't get a connection because the old one never
+                    # let go.
+                    break
+                try:
+                    chunk = await _asyncio.wait_for(proc.stdout.read(4096), timeout=1.0)
+                except _asyncio.TimeoutError:
+                    continue  # no new data yet -- loop back and re-check disconnect status
                 if not chunk:
                     break
                 buffer += chunk
@@ -254,6 +267,10 @@ async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(g
         finally:
             if proc.returncode is None:
                 proc.terminate()
+                try:
+                    await _asyncio.wait_for(proc.wait(), timeout=3)
+                except _asyncio.TimeoutError:
+                    proc.kill()
 
     return StreamingResponse(
         frame_generator(),

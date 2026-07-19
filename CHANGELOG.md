@@ -20,6 +20,17 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Fixed
+- Live view stopped streaming after navigating away and back, on cameras
+  that only accept one RTSP client at a time. The MJPEG live-view
+  generator never actively checked whether the browser was still
+  connected -- it only noticed passively, if at all, whenever it next
+  tried to send a frame. Navigating away left the old `ffmpeg` process
+  (and the one RTSP connection slot it held) running indefinitely in the
+  background; returning to live view then spawned a second `ffmpeg`
+  process that couldn't get a connection because the first one never let
+  go. Now actively polls `request.is_disconnected()` each loop iteration
+  (via a short read timeout so the check isn't blocked waiting on new
+  frames) and terminates the process promptly once the client is gone.
 - **Recording crash-looped forever, and could take down live view with
   it**, for any camera sending PCM A-law/mu-law audio (common on
   budget/consumer IP cameras): the default MP4 container flatly rejects
