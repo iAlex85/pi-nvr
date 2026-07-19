@@ -207,10 +207,35 @@ async def scan_network(user: User = Depends(require_admin)):
 # in a plain <img>/<video> tag from a stream-copied recording. Costly, so
 # it's meant for a small number of concurrent viewers, not the recording
 # path itself, and it only runs while a browser tab has it open.
+#
+# Cameras that only accept a single RTSP client (common on budget/
+# consumer hardware) make orphaned streams expensive: if a previous
+# live-view connection isn't cleanly torn down when a browser tab
+# navigates away, it can occupy the camera's one connection slot
+# indefinitely, leaving a *new* live-view request unable to connect at
+# all. Detecting "the client is gone" purely from the server side
+# (`request.is_disconnected()`) isn't fully reliable across browsers for
+# a multipart/x-mixed-replace stream, so instead of relying on that
+# alone, we track the active process per camera and proactively kill any
+# previous one the moment a new live-view request for that same camera
+# comes in -- guaranteeing at most one live-view stream per camera
+# regardless of whether the old client's disconnect was ever detected.
 # --------------------------------------------------------------------------
 
 import asyncio as _asyncio  # noqa: E402
 from fastapi.responses import StreamingResponse  # noqa: E402
+
+_active_mjpeg_processes: dict[int, "_asyncio.subprocess.Process"] = {}
+
+
+async def _kill_process(proc) -> None:
+    if proc.returncode is not None:
+        return
+    proc.terminate()
+    try:
+        await _asyncio.wait_for(proc.wait(), timeout=3)
+    except _asyncio.TimeoutError:
+        proc.kill()
 
 
 @router.get("/{camera_id}/mjpeg")
@@ -218,6 +243,10 @@ async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(g
     camera = db.get(Camera, camera_id)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
+
+    old_proc = _active_mjpeg_processes.get(camera_id)
+    if old_proc is not None:
+        await _kill_process(old_proc)
 
     rtsp_url = build_authenticated_rtsp_url(camera, substream=True)
 
@@ -229,6 +258,7 @@ async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(g
         "pipe:1",
     ]
     proc = await _asyncio.create_subprocess_exec(*cmd, stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.DEVNULL)
+    _active_mjpeg_processes[camera_id] = proc
 
     boundary = "pi-nvr-frame"
 
@@ -271,6 +301,8 @@ async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(g
                     await _asyncio.wait_for(proc.wait(), timeout=3)
                 except _asyncio.TimeoutError:
                     proc.kill()
+            if _active_mjpeg_processes.get(camera_id) is proc:
+                del _active_mjpeg_processes[camera_id]
 
     return StreamingResponse(
         frame_generator(),

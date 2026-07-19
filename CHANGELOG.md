@@ -20,6 +20,15 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Fixed
+- The previous `request.is_disconnected()` fix for live view wasn't
+  sufficient on its own -- browsers don't reliably/promptly close the
+  underlying connection for a `multipart/x-mixed-replace` stream on
+  navigation in every case, so an old live-view `ffmpeg` process could
+  still linger and hold a single-client camera's one RTSP slot. Now
+  additionally enforced server-side: at most one live-view stream per
+  camera, ever -- a new live-view request immediately kills any previous
+  stream for that same camera before connecting, independent of whether
+  the old client's disconnect was ever detected.
 - Live view stopped streaming after navigating away and back, on cameras
   that only accept one RTSP client at a time. The MJPEG live-view
   generator never actively checked whether the browser was still
