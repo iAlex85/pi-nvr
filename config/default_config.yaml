@@ -29,7 +29,19 @@ storage:
     check_interval_minutes: 15
 
 recording:
-  container: "mp4"          # mp4 or mkv
+  # MKV, not MP4, despite MP4 being the more "normal" default elsewhere.
+  # Many IP cameras (this includes budget/consumer hardware broadly, not
+  # one specific brand) send audio as PCM A-law/mu-law, which MP4's muxer
+  # flatly refuses to contain even via stream-copy -- ffmpeg fails to
+  # write the file header at all, and Pi-NVR's auto-restart then retries
+  # every few seconds forever, which on a single-RTSP-client camera also
+  # starves any other consumer of that camera's one connection slot (live
+  # view, motion detection). MKV accepts arbitrary codecs via stream-copy
+  # with no such restriction, matching the "never transcode" design goal
+  # far more reliably across real-world camera hardware. Change this to
+  # "mp4" only if you've confirmed your specific camera's audio codec is
+  # MP4-compatible (e.g. AAC).
+  container: "mkv"
   segment_seconds: 600
   pre_record_seconds: 5
   post_record_seconds: 10

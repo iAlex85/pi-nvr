@@ -87,10 +87,17 @@ def _get_recording_or_404(db: Session, recording_id: int) -> Recording:
     return rec
 
 
+VIDEO_MIME_TYPES = {
+    ".mp4": "video/mp4",
+    ".mkv": "video/x-matroska",
+}
+
+
 @router.get("/stream/{recording_id}")
 def stream_recording(recording_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     rec = _get_recording_or_404(db, recording_id)
-    return FileResponse(rec.file_path, media_type="video/mp4")
+    media_type = VIDEO_MIME_TYPES.get(Path(rec.file_path).suffix.lower(), "application/octet-stream")
+    return FileResponse(rec.file_path, media_type=media_type)
 
 
 @router.get("/download/{recording_id}")

@@ -20,6 +20,20 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Fixed
+- **Recording crash-looped forever, and could take down live view with
+  it**, for any camera sending PCM A-law/mu-law audio (common on
+  budget/consumer IP cameras): the default MP4 container flatly rejects
+  those codecs even via stream-copy, so `ffmpeg` failed to write the file
+  header on every single attempt, and Pi-NVR's auto-restart retried every
+  few seconds indefinitely -- continuously cycling a new RTSP connection
+  on cameras that only accept one client at a time, starving live view
+  and motion detection of the connection they needed. Changed the default
+  recording container from MP4 to **MKV**, which accepts arbitrary codecs
+  via stream-copy with no such restriction. Also fixed `/api/playback/stream`
+  and related endpoints, which hardcoded `video/mp4` as the response MIME
+  type regardless of the recording's actual container -- now detected
+  from the file extension, so MKV recordings are served with the correct
+  type instead of being mislabeled.
 - The Add/Edit Camera dialog had no way to select a storage target at
   all, even though the backend (`storage_target_id`) fully supported it --
   every camera silently used the default local storage with no way to
