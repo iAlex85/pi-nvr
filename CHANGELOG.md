@@ -6,6 +6,11 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Diagnostic logging throughout the live-view connection/retry path
+  (`journalctl -u pi-nvr -f`), and `ffmpeg`'s stderr is now captured and
+  logged on failed connection attempts instead of being silently
+  discarded -- needed to actually see why previous fix attempts weren't
+  resolving live view going blank after tab navigation.
 - `scripts/onvif_probe.py`: queries a camera's ONVIF service directly for
   its real RTSP stream URI(s) via `GetStreamUri`, instead of guessing
   common path patterns. Useful for cameras that answer ONVIF discovery

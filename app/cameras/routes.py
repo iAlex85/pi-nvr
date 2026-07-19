@@ -238,7 +238,7 @@ async def _kill_process(proc) -> None:
         proc.kill()
 
 
-async def _spawn_mjpeg_process(cmd: list, attempts: int = 3, retry_delay: float = 2.0):
+async def _spawn_mjpeg_process(camera_id: int, cmd: list, attempts: int = 3, retry_delay: float = 2.0):
     """Starts the ffmpeg live-view process, retrying a few times if it
     exits almost immediately -- typically means the camera hasn't yet
     released a just-closed connection internally (its own session
@@ -246,20 +246,29 @@ async def _spawn_mjpeg_process(cmd: list, attempts: int = 3, retry_delay: float 
     reconnect gets rejected even though nothing is actually wrong."""
     last_proc = None
     for attempt in range(1, attempts + 1):
+        logger.info("Live view: spawning ffmpeg for camera %s (attempt %d/%d)", camera_id, attempt, attempts)
         proc = await _asyncio.create_subprocess_exec(
-            *cmd, stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.DEVNULL
+            *cmd, stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.PIPE
         )
         try:
             await _asyncio.wait_for(proc.wait(), timeout=1.5)
-            # Exited almost immediately -- treat as a failed connection
-            # attempt and retry after a short delay, unless out of tries.
+            stderr = b""
+            if proc.stderr:
+                stderr = await proc.stderr.read()
+            logger.warning(
+                "Live view: ffmpeg for camera %s exited almost immediately "
+                "(attempt %d/%d, code=%s): %s",
+                camera_id, attempt, attempts, proc.returncode,
+                stderr.decode(errors="replace")[-500:],
+            )
             last_proc = proc
             if attempt < attempts:
                 await _asyncio.sleep(retry_delay)
                 continue
         except _asyncio.TimeoutError:
-            # Still running after 1.5s -- looks like it connected fine.
+            logger.info("Live view: ffmpeg for camera %s connected successfully (attempt %d/%d)", camera_id, attempt, attempts)
             return proc
+    logger.error("Live view: all %d connection attempts failed for camera %s", attempts, camera_id)
     return last_proc
 
 
@@ -269,8 +278,11 @@ async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(g
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
 
+    logger.info("Live view: new request for camera %s", camera_id)
+
     old_proc = _active_mjpeg_processes.get(camera_id)
     if old_proc is not None:
+        logger.info("Live view: killing previous stream for camera %s (pid=%s)", camera_id, old_proc.pid)
         await _kill_process(old_proc)
         # Our process exiting promptly doesn't mean the camera's own
         # firmware has released its RTSP session slot equally promptly --
@@ -286,7 +298,7 @@ async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(g
         "-vf", "scale=640:-2",
         "pipe:1",
     ]
-    proc = await _spawn_mjpeg_process(cmd)
+    proc = await _spawn_mjpeg_process(camera_id, cmd)
     _active_mjpeg_processes[camera_id] = proc
 
     boundary = "pi-nvr-frame"
