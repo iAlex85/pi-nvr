@@ -2,6 +2,7 @@
   const grid = document.getElementById("liveGrid");
   let cameras = [];
   let layoutCount = 4;
+  let renderedCameraIds = null; // tracks which cameras currently have live tiles/connections
 
   async function loadCameras() {
     try {
@@ -13,12 +14,28 @@
     render();
   }
 
-  function render() {
-    grid.innerHTML = "";
-    const visible = cameras.slice(0, layoutCount);
+  function applyGridStyle() {
     grid.style.gridTemplateColumns = layoutCount === 1
       ? "1fr"
       : "repeat(auto-fill, minmax(260px, 1fr))";
+  }
+
+  function render() {
+    const visible = cameras.slice(0, layoutCount);
+    const visibleIds = visible.map((c) => c.id).join(",");
+
+    // If the same set of cameras is already rendered, this is a pure
+    // layout-arrangement change (e.g. clicking 1 -> 4 -> 9 with only one
+    // camera configured) -- just restyle the grid, don't tear down and
+    // reconnect streams that are already working fine.
+    if (renderedCameraIds === visibleIds) {
+      applyGridStyle();
+      return;
+    }
+    renderedCameraIds = visibleIds;
+
+    grid.innerHTML = "";
+    applyGridStyle();
 
     visible.forEach((cam) => {
       const tile = document.createElement("div");
@@ -77,6 +94,7 @@
   // out and hit our reconnect-with-retry logic server-side.
   window.addEventListener("pageshow", (event) => {
     if (event.persisted) {
+      renderedCameraIds = null; // force a real reconnect, not just a layout restyle
       render();
     }
   });

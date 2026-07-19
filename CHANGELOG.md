@@ -25,6 +25,22 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Fixed
+- Confirmed fix: navigating away from and back to Live view now reliably
+  reconnects (verified via the new diagnostic logging) -- the combination
+  of active per-camera stream tracking, the settling delay/retry, and the
+  back-forward-cache fix together resolved it.
+- New issue found via the same logging: switching between live-view
+  layout options (1/4/9 cameras) quickly could break streaming, caused by
+  a race condition -- rapid successive requests for the same camera could
+  interleave their kill-old/spawn-new sequences instead of running one at
+  a time, confirmed in logs as overlapping "spawning ffmpeg" attempts
+  with no intervening success. Fixed with a per-camera `asyncio.Lock`
+  serializing the whole kill/settle/reconnect sequence. Also fixed the
+  root inefficiency causing this to matter as much as it did: switching
+  layout arrangement was destroying and reconnecting every video tile
+  even when the same cameras were already displayed and streaming fine --
+  now only the grid CSS changes in that case, and a real reconnect only
+  happens when the actual set of visible cameras changes.
 - Found the actual root cause of live view staying blank after switching
   tabs and back, which the previous two server-side fixes didn't address:
   Safari (and potentially other browsers) can restore the entire Live

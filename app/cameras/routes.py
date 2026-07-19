@@ -226,6 +226,22 @@ import asyncio as _asyncio  # noqa: E402
 from fastapi.responses import StreamingResponse  # noqa: E402
 
 _active_mjpeg_processes: dict[int, "_asyncio.subprocess.Process"] = {}
+# Serializes the kill-old/settle/spawn-new sequence per camera. Without
+# this, two requests arriving close together (e.g. clicking through
+# live-view layout options quickly) could interleave: request B reads
+# _active_mjpeg_processes before request A has finished killing its old
+# process and registering its new one, so B ends up killing the wrong
+# process or spawning a second connection concurrently with A's --
+# exactly the kind of overlap a single-RTSP-client camera can't handle.
+_mjpeg_locks: dict[int, "_asyncio.Lock"] = {}
+
+
+def _get_mjpeg_lock(camera_id: int) -> "_asyncio.Lock":
+    lock = _mjpeg_locks.get(camera_id)
+    if lock is None:
+        lock = _asyncio.Lock()
+        _mjpeg_locks[camera_id] = lock
+    return lock
 
 
 async def _kill_process(proc) -> None:
@@ -280,26 +296,28 @@ async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(g
 
     logger.info("Live view: new request for camera %s", camera_id)
 
-    old_proc = _active_mjpeg_processes.get(camera_id)
-    if old_proc is not None:
-        logger.info("Live view: killing previous stream for camera %s (pid=%s)", camera_id, old_proc.pid)
-        await _kill_process(old_proc)
-        # Our process exiting promptly doesn't mean the camera's own
-        # firmware has released its RTSP session slot equally promptly --
-        # give it a moment before trying to reconnect.
-        await _asyncio.sleep(1.5)
+    lock = _get_mjpeg_lock(camera_id)
+    async with lock:
+        old_proc = _active_mjpeg_processes.get(camera_id)
+        if old_proc is not None:
+            logger.info("Live view: killing previous stream for camera %s (pid=%s)", camera_id, old_proc.pid)
+            await _kill_process(old_proc)
+            # Our process exiting promptly doesn't mean the camera's own
+            # firmware has released its RTSP session slot equally promptly --
+            # give it a moment before trying to reconnect.
+            await _asyncio.sleep(1.5)
 
-    rtsp_url = build_authenticated_rtsp_url(camera, substream=True)
+        rtsp_url = build_authenticated_rtsp_url(camera, substream=True)
 
-    cmd = [
-        "ffmpeg", "-nostdin", "-loglevel", "error",
-        "-rtsp_transport", "tcp", "-i", rtsp_url,
-        "-f", "mjpeg", "-q:v", "6", "-r", "8",
-        "-vf", "scale=640:-2",
-        "pipe:1",
-    ]
-    proc = await _spawn_mjpeg_process(camera_id, cmd)
-    _active_mjpeg_processes[camera_id] = proc
+        cmd = [
+            "ffmpeg", "-nostdin", "-loglevel", "error",
+            "-rtsp_transport", "tcp", "-i", rtsp_url,
+            "-f", "mjpeg", "-q:v", "6", "-r", "8",
+            "-vf", "scale=640:-2",
+            "pipe:1",
+        ]
+        proc = await _spawn_mjpeg_process(camera_id, cmd)
+        _active_mjpeg_processes[camera_id] = proc
 
     boundary = "pi-nvr-frame"
 
