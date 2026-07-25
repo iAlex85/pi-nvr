@@ -46,8 +46,9 @@ sudo ./install.sh
 
 The installer installs `ffmpeg`, creates a Python virtualenv, sets up
 `/opt/pi-nvr`, generates a random session/DB-encryption secret, installs
-and starts a `pi-nvr` systemd service, and walks you through creating the
-first admin account (there is no default password shipped).
+and starts a `pi-nvr` systemd service. There is no default username or
+password shipped — when you open the web UI for the first time, it walks
+you through a setup wizard to create your admin account right there.
 
 When it finishes, it prints the URL to open — typically
 `http://<pi-ip>:8080`.

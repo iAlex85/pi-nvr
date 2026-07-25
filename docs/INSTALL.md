@@ -21,8 +21,9 @@ What it does, in order:
 6. Generates random session-signing and DB-encryption secrets into
    `/etc/pi-nvr/environment` (mode 600).
 7. Installs and enables `systemd/pi-nvr.service`.
-8. Prompts you to create the first admin account (there is no default
-   username/password).
+8. Starts the service. There is no default username/password shipped --
+   the first time you open the web UI, it walks you through a setup
+   wizard to create your admin account right in the browser.
 9. Starts the service and prints the URL to open.
 
 ## Manual installation (any Debian/Ubuntu system, incl. dev machines)

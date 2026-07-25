@@ -6,6 +6,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **First-run web setup wizard.** `install.sh` no longer prompts
+  interactively for an admin account during installation -- the first
+  time you open the web UI on a fresh install, you're guided through
+  creating your admin account right in the browser, then redirected
+  straight to the dashboard. `scripts/create_admin.py` still works as a
+  command-line fallback (e.g. for adding another admin later, or if you
+  forget your password), but it's no longer required during install.
 - Diagnostic logging throughout the live-view connection/retry path
   (`journalctl -u pi-nvr -f`), and `ffmpeg`'s stderr is now captured and
   logged on failed connection attempts instead of being silently

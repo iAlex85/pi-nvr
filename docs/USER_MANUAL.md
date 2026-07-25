@@ -2,10 +2,12 @@
 
 ## First login
 
-After installation, open `http://<your-pi-ip>:8080` and sign in with the
-admin account you created during `install.sh`. If you ever forget it, run
+After installation, open `http://<your-pi-ip>:8080`. On a fresh install
+you'll land on a one-time setup page to create your admin account right
+in the browser — no default username or password is ever shipped. If you
+ever forget your password, run
 `sudo -u pi-nvr /opt/pi-nvr/venv/bin/python3 /opt/pi-nvr/scripts/create_admin.py`
-again to add a new admin account.
+on the Pi to add a new admin account from the command line.
 
 ## Adding a camera
 

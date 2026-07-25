@@ -124,12 +124,6 @@ install_systemd_service() {
   systemctl enable pi-nvr.service
 }
 
-create_admin_account() {
-  log "Create the initial admin account (no default password is shipped):"
-  sudo -u "$SERVICE_USER" env PI_NVR_CONFIG="$CONFIG_DIR/config.yaml" \
-    "$INSTALL_PREFIX/venv/bin/python3" "$INSTALL_PREFIX/scripts/create_admin.py"
-}
-
 start_service() {
   log "Starting pi-nvr service..."
   systemctl start pi-nvr.service
@@ -148,13 +142,12 @@ main() {
   write_secrets
   set_permissions
   install_systemd_service
-  create_admin_account
   start_service
 
   IP_ADDR="$(hostname -I 2>/dev/null | awk '{print $1}')"
   PORT="$(grep -m1 'port:' "$CONFIG_DIR/config.yaml" | awk '{print $2}')"
   log "Installation complete."
-  log "Open http://${IP_ADDR:-<this-device-ip>}:${PORT:-8080} to sign in."
+  log "Open http://${IP_ADDR:-<this-device-ip>}:${PORT:-8080} to create your admin account and sign in."
   log "Manage the service with: systemctl [start|stop|restart|status] pi-nvr"
 }
 

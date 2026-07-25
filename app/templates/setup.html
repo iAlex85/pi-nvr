@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Welcome — Pi-NVR Setup</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="card login-card" style="width:360px;">
+      <div class="login-brand">
+        <span class="brand-mark">◉</span>
+        <span class="brand-text">PI&#8209;NVR</span>
+      </div>
+      <p style="color:var(--text-dim); font-size:13px; text-align:center; margin:-6px 0 18px;">
+        Welcome. Create the admin account to finish setup — this is the only
+        account that will exist until you add more from Settings.
+      </p>
+      <form id="setupForm">
+        <div class="field">
+          <label for="username">Admin username</label>
+          <input id="username" name="username" autocomplete="username" required />
+        </div>
+        <div class="field">
+          <label for="password">Password (min 8 characters)</label>
+          <input id="password" name="password" type="password" minlength="8" autocomplete="new-password" required />
+        </div>
+        <div class="field">
+          <label for="confirmPassword">Confirm password</label>
+          <input id="confirmPassword" name="confirmPassword" type="password" minlength="8" autocomplete="new-password" required />
+        </div>
+        <button class="btn btn-primary" type="submit" style="width:100%; justify-content:center;">Create account &amp; continue</button>
+        <div class="login-error" id="setupError"></div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById("setupForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById("setupError");
+      errorEl.textContent = "";
+      const username = document.getElementById("username").value.trim();
+      const password = document.getElementById("password").value;
+      const confirmPassword = document.getElementById("confirmPassword").value;
+
+      if (password !== confirmPassword) {
+        errorEl.textContent = "Passwords do not match";
+        return;
+      }
+      if (password.length < 8) {
+        errorEl.textContent = "Password must be at least 8 characters";
+        return;
+      }
+
+      try {
+        const res = await fetch("/api/auth/setup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          errorEl.textContent = body.detail || "Setup failed";
+          return;
+        }
+        window.location.href = "/dashboard";
+      } catch (err) {
+        errorEl.textContent = "Could not reach the server";
+      }
+    });
+  </script>
+</body>
+</html>

@@ -84,19 +84,40 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router, prefix="/api")
 
+    def _setup_required() -> bool:
+        from app.database import session_scope
+        from app.models import User
+
+        with session_scope() as db:
+            return db.query(User).first() is None
+
     @app.get("/")
     async def root(request: Request):
+        if _setup_required():
+            return RedirectResponse(url="/setup")
         user = await get_current_user_optional(request)
         if not user:
             return RedirectResponse(url="/login")
         return RedirectResponse(url="/dashboard")
 
+    @app.get("/setup")
+    async def setup_page(request: Request):
+        if not _setup_required():
+            # Setup already completed -- don't let this page be used to
+            # create additional unauthenticated accounts.
+            return RedirectResponse(url="/login")
+        return templates.TemplateResponse(request, "setup.html", {})
+
     @app.get("/login")
     async def login_page(request: Request):
+        if _setup_required():
+            return RedirectResponse(url="/setup")
         return templates.TemplateResponse(request, "login.html", {})
 
     @app.get("/dashboard")
     async def dashboard_page(request: Request):
+        if _setup_required():
+            return RedirectResponse(url="/setup")
         user = await get_current_user_optional(request)
         if not user:
             return RedirectResponse(url="/login")
