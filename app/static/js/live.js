@@ -3,6 +3,20 @@
   let cameras = [];
   let layoutCount = 4;
   let renderedCameraIds = null; // tracks which cameras currently have live tiles/connections
+  const FAVORITE_KEY = "pinvr_favorite_camera_id";
+
+  function getFavoriteId() {
+    const raw = localStorage.getItem(FAVORITE_KEY);
+    return raw ? parseInt(raw, 10) : null;
+  }
+
+  function setFavoriteId(id) {
+    if (id == null) {
+      localStorage.removeItem(FAVORITE_KEY);
+    } else {
+      localStorage.setItem(FAVORITE_KEY, String(id));
+    }
+  }
 
   async function loadCameras() {
     try {
@@ -10,6 +24,18 @@
     } catch (e) {
       PiNVR.toast(e.message, true);
       cameras = [];
+    }
+
+    const favoriteId = getFavoriteId();
+    if (favoriteId != null && cameras.some((c) => c.id === favoriteId)) {
+      // Favorite goes first, and Live view defaults to showing just it
+      // (layout 1) on arrival -- the whole point of marking one as a
+      // favorite is not having to hunt for it in a multi-camera grid.
+      cameras.sort((a, b) => (a.id === favoriteId ? -1 : b.id === favoriteId ? 1 : 0));
+      layoutCount = 1;
+      document.querySelectorAll("[data-layout]").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.layout === "1");
+      });
     }
     render();
   }
@@ -37,9 +63,11 @@
     grid.innerHTML = "";
     applyGridStyle();
 
+    const favoriteId = getFavoriteId();
     visible.forEach((cam) => {
       const tile = document.createElement("div");
       tile.className = "camera-tile";
+      const isFavorite = cam.id === favoriteId;
       // Cache-bust with a timestamp so this is always a genuinely fresh
       // request, never something the browser decides to reuse/restore
       // from cache -- important for a live multipart stream, where a
@@ -48,7 +76,11 @@
         <img src="/api/cameras/${cam.id}/mjpeg?t=${Date.now()}" alt="${cam.name}" />
         <div class="tile-label">
           ${cam.name}
-          <button class="btn" data-snapshot="${cam.id}" style="float:right; padding:2px 8px;">Snap</button>
+          <span style="float:right; display:flex; gap:4px;">
+            <button class="btn" data-favorite="${cam.id}" title="${isFavorite ? 'Unset favorite' : 'Set as favorite'}"
+                    style="padding:2px 8px; ${isFavorite ? 'color:var(--amber); border-color:var(--amber-dim);' : ''}">${isFavorite ? '★' : '☆'}</button>
+            <button class="btn" data-snapshot="${cam.id}" style="padding:2px 8px;">Snap</button>
+          </span>
         </div>`;
       grid.appendChild(tile);
     });
@@ -60,18 +92,29 @@
 
   grid.addEventListener("click", async (e) => {
     const camId = e.target.getAttribute("data-snapshot");
-    if (!camId) return;
-    try {
-      await PiNVR.api(`/playback/snapshot/${camId}`, { method: "POST" });
-      PiNVR.toast("Snapshot captured");
-    } catch (err) {
-      PiNVR.toast(err.message, true);
+    const favoriteId = e.target.getAttribute("data-favorite");
+    if (camId) {
+      try {
+        await PiNVR.api(`/playback/snapshot/${camId}`, { method: "POST" });
+        PiNVR.toast("Snapshot captured");
+      } catch (err) {
+        PiNVR.toast(err.message, true);
+      }
+      return;
+    }
+    if (favoriteId) {
+      const id = parseInt(favoriteId, 10);
+      const isCurrentlyFavorite = getFavoriteId() === id;
+      setFavoriteId(isCurrentlyFavorite ? null : id);
+      renderedCameraIds = null; // force a re-render so the star + ordering update
+      loadCameras();
     }
   });
 
   document.querySelectorAll("[data-layout]").forEach((btn) => {
     btn.addEventListener("click", () => {
       layoutCount = parseInt(btn.dataset.layout, 10);
+      document.querySelectorAll("[data-layout]").forEach((b) => b.classList.toggle("active", b === btn));
       render();
     });
   });

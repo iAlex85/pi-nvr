@@ -209,6 +209,7 @@ button { font-family: inherit; }
 .btn:hover { border-color: var(--text-faint); }
 .btn-primary { background: var(--amber); border-color: var(--amber); color: #14110a; font-weight: 600; }
 .btn-primary:hover { background: #f0b355; }
+.btn.active { border-color: var(--amber); color: var(--amber); }
 .btn-danger { color: var(--red); }
 .btn-danger:hover { border-color: var(--red); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -241,7 +242,7 @@ tr:hover td { background: var(--panel-raised); }
   font-size: 11px;
   font-family: var(--font-mono);
 }
-.badge-online { background: rgba(232, 163, 61, 0.15); color: var(--amber); }
+.badge-online { background: rgba(76, 175, 125, 0.15); color: var(--green); }
 .badge-offline { background: rgba(214, 69, 69, 0.15); color: var(--red); }
 .badge-recording { background: rgba(76, 175, 125, 0.15); color: var(--green); }
 

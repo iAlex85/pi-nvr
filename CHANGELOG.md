@@ -6,6 +6,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Favorite camera** (Live view): click the star on any camera tile to
+  mark it as favorite. Landing on Live view afterward defaults to
+  showing just that camera (layout 1) instead of the full grid, and it's
+  always sorted first when viewing multiple cameras. Stored per-browser
+  (not shared across devices/users), since it's a personal viewing
+  preference rather than system configuration.
 - **Format a new storage device** (Storage page): scans for connected
   block devices (HDD/SSD/USB/microSD) and offers to format any of them as
   ext4, ready to register as a storage target. Requires typing the exact
@@ -40,6 +46,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   so at least the camera's IP is confirmed, even when the exact stream
   path and credentials still have to come from the camera's app/manual.
   Automatically excludes the Tailscale interface and loopback.
+
+### Changed
+- Online/offline status badges (Cameras page, Dashboard tiles) now use
+  green for online and red for offline, instead of the previous
+  amber/red pairing -- amber remains reserved for the sidebar status
+  rail's signature glow.
 
 ### Fixed
 - Confirmed fix: navigating away from and back to Live view now reliably
