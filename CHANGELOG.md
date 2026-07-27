@@ -48,6 +48,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Changed
+- **UI modernization pass**: sidebar navigation now uses clean inline SVG
+  icons instead of Unicode symbols, added a left-edge accent indicator on
+  the active nav item, smooth transitions on buttons/cards/inputs/nav
+  links, subtle press feedback on buttons, hover depth on cards and
+  camera tiles, and polished modal dialogs (backdrop blur, entrance
+  animation, shadow). Purely visual -- no behavior changes.
 - Online/offline status badges (Cameras page, Dashboard tiles) now use
   green for online and red for offline, instead of the previous
   amber/red pairing -- amber remains reserved for the sidebar status
