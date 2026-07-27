@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.auth.dependencies import get_current_user, require_admin
 from app.database import get_db
 from app.models import StorageTarget, User
+from app.storage import device_format
 
 router = APIRouter()
 
@@ -108,4 +109,67 @@ async def cleanup_now(request: Request, user: User = Depends(require_admin)):
     import asyncio
 
     await asyncio.get_event_loop().run_in_executor(None, request.app.state.storage.run_retention_pass)
+    return {"ok": True}
+
+
+# --------------------------------------------------------------------------
+# Device formatting. Deliberately admin-only, deliberately requires the
+# caller to echo the device path back as confirmation (see
+# app/storage/device_format.py for the full safety rationale), and
+# deliberately only ever offers ext4 as the target filesystem.
+# --------------------------------------------------------------------------
+
+class BlockDeviceOut(BaseModel):
+    name: str
+    path: str
+    size_bytes: int
+    fstype: str | None
+    mountpoint: str | None
+    type: str
+    protected: bool
+    protected_reason: str | None
+
+
+class FormatDeviceRequest(BaseModel):
+    device_path: str
+    confirm: str
+    filesystem: str = "ext4"
+
+
+@router.get("/devices", response_model=list[BlockDeviceOut])
+async def list_block_devices(user: User = Depends(require_admin)):
+    """Lists all block devices/partitions on the system (mounted or not),
+    for the Storage page's "format a new device" picker. Devices on the
+    OS's own disk are flagged as protected and should be shown disabled,
+    not offered as format targets, in the UI."""
+    import asyncio
+
+    try:
+        devices = await asyncio.get_event_loop().run_in_executor(None, device_format.list_devices)
+    except device_format.DeviceFormatError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return [
+        BlockDeviceOut(
+            name=d.name, path=d.path, size_bytes=d.size_bytes, fstype=d.fstype,
+            mountpoint=d.mountpoint, type=d.type, protected=d.protected,
+            protected_reason=d.protected_reason,
+        )
+        for d in devices
+    ]
+
+
+@router.post("/devices/format")
+async def format_block_device(payload: FormatDeviceRequest, user: User = Depends(require_admin)):
+    """Formats a device as ext4. `confirm` must exactly match `device_path`
+    -- this is intentionally not a simple "are you sure?" checkbox, since
+    formatting destroys data irreversibly and this project would rather
+    be annoying than responsible for an accidental wipe."""
+    import asyncio
+
+    try:
+        await asyncio.get_event_loop().run_in_executor(
+            None, device_format.format_device, payload.device_path, payload.confirm, payload.filesystem,
+        )
+    except device_format.DeviceFormatError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True}

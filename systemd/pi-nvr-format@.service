@@ -1,0 +1,16 @@
+[Unit]
+Description=Pi-NVR device format helper (%i)
+# This is a one-shot, root-owned helper triggered by the (unprivileged,
+# NoNewPrivileges=true) pi-nvr service to format a specific block device.
+# It exists as a separate unit specifically so pi-nvr.service itself can
+# keep its hardening intact -- this narrow helper is the only thing that
+# ever runs with elevated privileges for this feature, and it only ever
+# does exactly what scripts/format_device.sh does (which re-validates
+# the device independently before touching anything).
+
+[Service]
+Type=oneshot
+ExecStart=__INSTALL_PREFIX__/scripts/format_device.sh %i
+# No User= directive -- this runs as root, deliberately. Access is
+# gated by the polkit rule in /etc/polkit-1/rules.d/, which permits only
+# the pi-nvr user to start units matching this specific template name.

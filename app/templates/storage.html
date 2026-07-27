@@ -18,6 +18,36 @@
   <thead><tr><th>Path</th><th>Type</th><th>Free / Total</th><th></th></tr></thead>
   <tbody id="browseBody"></tbody>
 </table>
+
+<div class="section-title">Format a new device</div>
+<p style="color:var(--text-dim); font-size:12px; margin:-6px 0 12px;">
+  For a brand-new HDD/SSD/USB drive/microSD that isn't usable yet. This
+  <strong style="color:var(--red);">erases everything</strong> on the device you pick.
+  The system disk Pi-NVR itself runs from is always excluded and can't be selected.
+</p>
+<button class="btn" id="scanDevicesBtn">Scan for devices</button>
+<table id="devicesTable" style="display:none; margin-top:14px;">
+  <thead><tr><th>Device</th><th>Size</th><th>Current filesystem</th><th>Mounted at</th><th></th></tr></thead>
+  <tbody id="devicesBody"></tbody>
+</table>
+
+<dialog id="formatDialog" style="background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:6px; width:440px; padding:20px;">
+  <form method="dialog" id="formatForm">
+    <h3 style="margin-top:0; color:var(--red);">⚠ Format device</h3>
+    <p style="font-size:13px; color:var(--text-dim);">
+      This will <strong>permanently erase all data</strong> on <code id="formatDevicePath" style="color:var(--text);"></code>
+      and create a new, empty ext4 filesystem. This cannot be undone.
+    </p>
+    <div class="field">
+      <label>Type the device path shown above to confirm</label>
+      <input id="formatConfirmInput" placeholder="/dev/sdX1" autocomplete="off" />
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button type="button" class="btn" id="cancelFormatDialog">Cancel</button>
+      <button type="submit" class="btn btn-danger" id="confirmFormatBtn" disabled>Format and erase</button>
+    </div>
+  </form>
+</dialog>
 {% endblock %}
 {% block scripts %}
 <script>
@@ -89,6 +119,68 @@
       await PiNVR.api("/storage/cleanup-now", { method: "POST" });
       PiNVR.toast("Retention cleanup started");
     } catch (err) { PiNVR.toast(err.message, true); }
+  });
+
+  const formatDialog = document.getElementById("formatDialog");
+  const formatConfirmInput = document.getElementById("formatConfirmInput");
+  const confirmFormatBtn = document.getElementById("confirmFormatBtn");
+  let pendingFormatPath = null;
+
+  document.getElementById("scanDevicesBtn").addEventListener("click", async () => {
+    try {
+      const devices = await PiNVR.api("/storage/devices");
+      const table = document.getElementById("devicesTable");
+      table.style.display = "table";
+      document.getElementById("devicesBody").innerHTML = devices.map((d) => {
+        const rowStyle = d.protected ? "opacity:0.45;" : "";
+        const action = d.protected
+          ? `<span style="font-size:11px; color:var(--text-faint);" title="${d.protected_reason || ''}">System disk</span>`
+          : `<button class="btn btn-danger" data-format="${d.path}" style="padding:4px 8px;">Format as ext4</button>`;
+        return `<tr style="${rowStyle}">
+          <td>${d.path}</td>
+          <td>${fmtBytes(d.size_bytes)}</td>
+          <td>${d.fstype || "--"}</td>
+          <td>${d.mountpoint || "--"}</td>
+          <td>${action}</td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="5" style="color:var(--text-faint);">No devices found.</td></tr>`;
+    } catch (e) { PiNVR.toast(e.message, true); }
+  });
+
+  document.getElementById("devicesBody").addEventListener("click", (e) => {
+    const path = e.target.getAttribute("data-format");
+    if (!path) return;
+    pendingFormatPath = path;
+    document.getElementById("formatDevicePath").textContent = path;
+    formatConfirmInput.value = "";
+    confirmFormatBtn.disabled = true;
+    formatDialog.showModal();
+  });
+
+  formatConfirmInput.addEventListener("input", () => {
+    confirmFormatBtn.disabled = formatConfirmInput.value !== pendingFormatPath;
+  });
+
+  document.getElementById("cancelFormatDialog").addEventListener("click", () => formatDialog.close());
+
+  document.getElementById("formatForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (formatConfirmInput.value !== pendingFormatPath) return;
+    confirmFormatBtn.disabled = true;
+    confirmFormatBtn.textContent = "Formatting…";
+    try {
+      await PiNVR.api("/storage/devices/format", {
+        method: "POST",
+        body: { device_path: pendingFormatPath, confirm: formatConfirmInput.value, filesystem: "ext4" },
+      });
+      PiNVR.toast(`${pendingFormatPath} formatted successfully`);
+      formatDialog.close();
+      document.getElementById("scanDevicesBtn").click();
+    } catch (err) {
+      PiNVR.toast(err.message, true);
+    } finally {
+      confirmFormatBtn.textContent = "Format and erase";
+    }
   });
 
   loadTargets();

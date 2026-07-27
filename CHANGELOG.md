@@ -6,6 +6,16 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Format a new storage device** (Storage page): scans for connected
+  block devices (HDD/SSD/USB/microSD) and offers to format any of them as
+  ext4, ready to register as a storage target. Requires typing the exact
+  device path back as confirmation before it will proceed -- this is a
+  destructive, irreversible operation and the UI is intentionally strict
+  about it. The device the OS itself runs from is always excluded and
+  can't be selected, checked independently in three places (the API, and
+  twice more in the privileged helper that actually performs the format).
+  See SECURITY.md for how this works without weakening pi-nvr.service's
+  own hardening.
 - **First-run web setup wizard.** `install.sh` no longer prompts
   interactively for an admin account during installation -- the first
   time you open the web UI on a fresh install, you're guided through

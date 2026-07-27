@@ -1,0 +1,24 @@
+// Installed by Pi-NVR's install.sh.
+//
+// Grants the pi-nvr system user permission to start (and only start --
+// not stop, restart, or manage any other unit) instances of the
+// pi-nvr-format@.service template, used exclusively by the Storage
+// page's device-formatting feature. This is deliberately as narrow as
+// polkit's rule language allows: matching by exact unit-name prefix,
+// for one specific system user, one specific action.
+//
+// See docs/INSTALL.md and SECURITY.md for the full rationale -- this
+// exists so the main pi-nvr.service can keep NoNewPrivileges=true and
+// other hardening intact while still being able to trigger this one
+// narrow, root-owned helper for a destructive operation the user
+// explicitly requested.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        subject.user == "__SERVICE_USER__") {
+        var unit = action.lookup("unit");
+        var verb = action.lookup("verb");
+        if (unit && verb == "start" && unit.indexOf("pi-nvr-format@") === 0) {
+            return polkit.Result.YES;
+        }
+    }
+});

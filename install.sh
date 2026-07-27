@@ -112,6 +112,40 @@ set_permissions() {
   chown -R "$SERVICE_USER":"$SERVICE_USER" "$CONFIG_DIR"
 }
 
+install_format_helper() {
+  # The Storage page's "format a new device" feature needs to run
+  # `umount`/`mkfs.ext4` as root, but pi-nvr.service runs as an
+  # unprivileged user with NoNewPrivileges=true (see SECURITY.md) --
+  # that flag blocks sudo/setuid at the kernel level, so a sudoers rule
+  # would silently not work here. Instead: a separate, root-owned
+  # systemd template unit (pi-nvr-format@.service) runs the actual
+  # formatting, triggered by the unprivileged service via `systemctl
+  # start --wait` (a D-Bus call to systemd's already-privileged PID 1,
+  # not a privilege escalation of pi-nvr's own process, so
+  # NoNewPrivileges doesn't block it). A polkit rule authorizes the
+  # pi-nvr user to start *only* units matching that one template name.
+  log "Installing device-format helper (systemd unit + polkit rule)..."
+
+  if ! command -v pkaction >/dev/null 2>&1 && ! command -v polkitd >/dev/null 2>&1; then
+    apt-get install -y polkitd 2>/dev/null || apt-get install -y policykit-1 2>/dev/null || {
+      err "Could not install polkit -- device formatting from the UI will not work. Manual mkfs.ext4/umount from the shell is unaffected."
+      return 0
+    }
+  fi
+
+  install -m 700 -o root -g root "$REPO_DIR/scripts/format_device.sh" "$INSTALL_PREFIX/scripts/format_device.sh"
+
+  sed "s#__INSTALL_PREFIX__#$INSTALL_PREFIX#g" \
+    "$REPO_DIR/systemd/pi-nvr-format@.service" > /etc/systemd/system/pi-nvr-format@.service
+
+  mkdir -p /etc/polkit-1/rules.d
+  sed "s#__SERVICE_USER__#$SERVICE_USER#g" \
+    "$REPO_DIR/systemd/60-pi-nvr-format.rules" > /etc/polkit-1/rules.d/60-pi-nvr-format.rules
+  chmod 644 /etc/polkit-1/rules.d/60-pi-nvr-format.rules
+
+  systemctl daemon-reload
+}
+
 install_systemd_service() {
   log "Installing systemd service..."
   sed \
@@ -141,6 +175,7 @@ main() {
   write_config
   write_secrets
   set_permissions
+  install_format_helper
   install_systemd_service
   start_service
 

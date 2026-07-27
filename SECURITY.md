@@ -42,3 +42,17 @@ current.
   embedded in a third-party page), please open an issue.
 - The systemd unit runs as a dedicated non-root `pi-nvr` user with
   `ProtectSystem=strict`, `NoNewPrivileges`, and `PrivateTmp`.
+- **Device formatting** (Storage page) is the one feature that genuinely
+  needs root privileges (formatting a block device requires it) despite
+  the hardening above. Rather than weakening `pi-nvr.service` itself, a
+  separate, narrowly-scoped root-owned systemd template unit
+  (`pi-nvr-format@.service`) performs the actual format, triggered via
+  `systemctl start --wait` (a D-Bus call to systemd's already-privileged
+  PID 1 -- not a privilege escalation of `pi-nvr`'s own process, so
+  `NoNewPrivileges` doesn't block it). A polkit rule
+  (`/etc/polkit-1/rules.d/60-pi-nvr-format.rules`) authorizes the
+  `pi-nvr` user to start *only* units matching that one template name --
+  nothing else. Both the calling Python code and the root-owned helper
+  script independently refuse to touch the disk the OS is running from,
+  and every format request requires the caller to echo the exact device
+  path back as confirmation (see `app/storage/device_format.py`).
