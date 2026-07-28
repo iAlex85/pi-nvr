@@ -282,6 +282,53 @@ tr:hover td { background: var(--panel-raised); }
   color: var(--text);
 }
 
+.ptz-pad {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: rgba(10, 11, 13, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  padding: 6px;
+  backdrop-filter: blur(3px);
+}
+.ptz-pad-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 26px);
+  grid-template-rows: repeat(3, 26px);
+  gap: 2px;
+}
+.ptz-btn {
+  padding: 0;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1;
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.ptz-btn:hover { background: rgba(232, 163, 61, 0.18); border-color: var(--amber-dim); }
+.ptz-btn:active { background: var(--amber-glow); }
+.ptz-zoom { display: flex; gap: 2px; }
+.ptz-zoom .ptz-btn { width: 26px; height: 22px; }
+
+.ptz-detect-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+  background: rgba(10, 11, 13, 0.55);
+  backdrop-filter: blur(3px);
+}
+
 .toast-root { position: fixed; bottom: 18px; right: 18px; display: flex; flex-direction: column; gap: 8px; z-index: 999; }
 .toast { background: var(--panel-raised); border: 1px solid var(--border); border-left: 3px solid var(--amber); padding: 10px 14px; border-radius: var(--radius); font-size: 13px; min-width: 220px; box-shadow: 0 4px 14px rgba(0,0,0,0.4); }
 .toast.error { border-left-color: var(--red); }

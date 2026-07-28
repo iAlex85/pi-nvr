@@ -66,6 +66,13 @@
     <div class="field" style="display:flex; gap:8px; align-items:center;">
       <input type="checkbox" id="fMotion" style="width:auto;" /><label style="margin:0;" for="fMotion">Enable motion detection</label>
     </div>
+    <details style="margin-bottom:14px;">
+      <summary style="cursor:pointer; font-size:12px; color:var(--text-dim); margin-bottom:10px;">ONVIF / PTZ (optional, for pan-tilt-zoom control)</summary>
+      <div class="field"><label>ONVIF host</label><input id="fOnvifHost" placeholder="192.168.1.50" /></div>
+      <div class="field"><label>ONVIF port</label><input id="fOnvifPort" placeholder="80 (often 8080 or 8899)" /></div>
+      <div class="field"><label>ONVIF username</label><input id="fOnvifUser" /></div>
+      <div class="field"><label>ONVIF password</label><input id="fOnvifPass" type="password" placeholder="Leave blank to keep current password" /></div>
+    </details>
     <div style="display:flex; gap:8px; justify-content:flex-end;">
       <button type="button" class="btn" id="cancelDialog">Cancel</button>
       <button type="submit" class="btn btn-primary">Save</button>
@@ -124,6 +131,10 @@
     document.getElementById("fPass").value = "";
     document.getElementById("fMode").value = cam ? cam.recording_mode : "off";
     document.getElementById("fMotion").checked = cam ? cam.motion_enabled : false;
+    document.getElementById("fOnvifHost").value = cam ? (cam.onvif_host || "") : "";
+    document.getElementById("fOnvifPort").value = cam && cam.onvif_port ? cam.onvif_port : "";
+    document.getElementById("fOnvifUser").value = cam ? (cam.onvif_username || "") : "";
+    document.getElementById("fOnvifPass").value = "";
     populateStorageTargets().then(() => {
       document.getElementById("fStorageTarget").value = cam && cam.storage_target_id ? cam.storage_target_id : "";
     });
@@ -149,6 +160,12 @@
       storage_target_id: document.getElementById("fStorageTarget").value
         ? parseInt(document.getElementById("fStorageTarget").value, 10)
         : null,
+      onvif_host: document.getElementById("fOnvifHost").value || null,
+      onvif_port: document.getElementById("fOnvifPort").value
+        ? parseInt(document.getElementById("fOnvifPort").value, 10)
+        : null,
+      onvif_username: document.getElementById("fOnvifUser").value || null,
+      onvif_password: document.getElementById("fOnvifPass").value || null,
       enabled: true,
     };
     try {

@@ -81,7 +81,8 @@
                     style="padding:2px 8px; ${isFavorite ? 'color:var(--amber); border-color:var(--amber-dim);' : ''}">${isFavorite ? '★' : '☆'}</button>
             <button class="btn" data-snapshot="${cam.id}" style="padding:2px 8px;">Snap</button>
           </span>
-        </div>`;
+        </div>
+        ${cam.supports_ptz ? renderPtzPad(cam.id) : `<button class="btn ptz-detect-btn" data-detect-ptz="${cam.id}">Check for PTZ</button>`}`;
       grid.appendChild(tile);
     });
 
@@ -90,9 +91,57 @@
     }
   }
 
+  function renderPtzPad(camId) {
+    // Directional pad: press-and-hold sends a continuous-move command,
+    // release sends stop. The backend also auto-stops after 1.5s as a
+    // safety net in case a touch/mouse "up" event is ever missed (e.g.
+    // finger dragged off the button before lifting).
+    const dir = (label, direction, extraStyle = "") => `
+      <button class="btn ptz-btn" data-ptz-move="${camId}" data-ptz-dir="${direction}" style="${extraStyle}">${label}</button>`;
+    return `
+      <div class="ptz-pad" data-ptz-camera="${camId}">
+        <div class="ptz-pad-grid">
+          <span></span>${dir("▲", "up")}<span></span>
+          ${dir("◀", "left")}${dir("⌂", "home", "font-size:11px;")}${dir("▶", "right")}
+          <span></span>${dir("▼", "down")}<span></span>
+        </div>
+        <div class="ptz-zoom">
+          ${dir("－", "zoom_out")}${dir("＋", "zoom_in")}
+        </div>
+      </div>`;
+  }
+
+  async function ptzMove(camId, direction) {
+    if (direction === "home") {
+      try {
+        await PiNVR.api(`/cameras/${camId}/ptz/home`, { method: "POST" });
+      } catch (err) {
+        PiNVR.toast(err.message, true);
+      }
+      return;
+    }
+    try {
+      await PiNVR.api(`/cameras/${camId}/ptz/move`, { method: "POST", body: { direction, speed: 0.5 } });
+    } catch (err) {
+      PiNVR.toast(err.message, true);
+    }
+  }
+
+  async function ptzStop(camId) {
+    try {
+      await PiNVR.api(`/cameras/${camId}/ptz/stop`, { method: "POST" });
+    } catch (err) {
+      // Stop failing silently is fine -- the backend auto-stops after
+      // 1.5s regardless, and surfacing an error here on every button
+      // release would be noisy for a camera that simply doesn't support
+      // PTZ stop cleanly.
+    }
+  }
+
   grid.addEventListener("click", async (e) => {
     const camId = e.target.getAttribute("data-snapshot");
     const favoriteId = e.target.getAttribute("data-favorite");
+    const detectId = e.target.getAttribute("data-detect-ptz");
     if (camId) {
       try {
         await PiNVR.api(`/playback/snapshot/${camId}`, { method: "POST" });
@@ -109,6 +158,42 @@
       renderedCameraIds = null; // force a re-render so the star + ordering update
       loadCameras();
     }
+    if (detectId) {
+      PiNVR.toast("Checking for PTZ support…");
+      try {
+        const result = await PiNVR.api(`/cameras/${detectId}/ptz/detect`, { method: "POST" });
+        if (result.supports_ptz) {
+          PiNVR.toast("PTZ supported — controls added");
+          renderedCameraIds = null;
+          loadCameras();
+        } else {
+          PiNVR.toast("This camera does not support ONVIF PTZ", true);
+        }
+      } catch (err) {
+        PiNVR.toast(err.message, true);
+      }
+    }
+  });
+
+  // PTZ directional buttons use press-and-hold (mouse and touch), not
+  // click, since continuous-move is a "while held" action.
+  grid.addEventListener("mousedown", (e) => {
+    const camId = e.target.getAttribute("data-ptz-move");
+    const dir = e.target.getAttribute("data-ptz-dir");
+    if (camId && dir) ptzMove(camId, dir);
+  });
+  grid.addEventListener("touchstart", (e) => {
+    const camId = e.target.getAttribute("data-ptz-move");
+    const dir = e.target.getAttribute("data-ptz-dir");
+    if (camId && dir) { e.preventDefault(); ptzMove(camId, dir); }
+  }, { passive: false });
+
+  ["mouseup", "mouseleave", "touchend", "touchcancel"].forEach((evt) => {
+    grid.addEventListener(evt, (e) => {
+      const camId = e.target.getAttribute("data-ptz-move");
+      const dir = e.target.getAttribute("data-ptz-dir");
+      if (camId && dir && dir !== "home") ptzStop(camId);
+    });
   });
 
   document.querySelectorAll("[data-layout]").forEach((btn) => {

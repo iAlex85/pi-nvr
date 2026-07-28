@@ -6,6 +6,18 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **PTZ joystick controls** (Live view): cameras with `supports_ptz` show
+  a directional pad overlay (up/down/left/right/zoom/home) directly on
+  their live-view tile -- press and hold to move, release to stop.
+  Cameras not yet checked show a "Check for PTZ" button that probes via
+  ONVIF and adds the controls automatically if supported. Added ONVIF
+  host/port/username/password fields to the Add/Edit Camera dialog
+  (previously configurable only via the API, with no UI at all) -- PTZ
+  needs these regardless of RTSP credentials. Note: PTZ depends on the
+  camera's ONVIF implementation actually supporting the standard move
+  commands; some budget cameras advertise ONVIF but don't fully
+  implement it, in which case this will report no PTZ support even if
+  the camera can physically move via its own app.
 - **Favorite camera** (Live view): click the star on any camera tile to
   mark it as favorite. Landing on Live view afterward defaults to
   showing just that camera (layout 1) instead of the full grid, and it's

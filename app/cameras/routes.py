@@ -50,6 +50,9 @@ class CameraOut(BaseModel):
     motion_enabled: bool
     supports_ptz: bool
     storage_target_id: int | None
+    onvif_host: str | None
+    onvif_port: int | None
+    onvif_username: str | None
 
     class Config:
         from_attributes = True
