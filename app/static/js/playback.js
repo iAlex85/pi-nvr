@@ -5,6 +5,10 @@
   const calendarDays = document.getElementById("calendarDays");
   const recordingsBody = document.getElementById("recordingsBody");
   const player = document.getElementById("player");
+  const searchStart = document.getElementById("searchStart");
+  const searchEnd = document.getElementById("searchEnd");
+
+  let activeSearchRange = null; // {start, end} while a date/time search is active, else null
 
   const now = new Date();
   monthSelect.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -41,12 +45,16 @@
     const camId = cameraSelect.value;
     if (!camId) return;
     try {
-      const recordings = await PiNVR.api(`/recordings?camera_id=${camId}`);
-      const filtered = filterType.value === "motion"
-        ? recordings.filter((r) => r.trigger === "motion")
-        : recordings;
+      const params = new URLSearchParams({ camera_id: camId });
+      if (activeSearchRange) {
+        if (activeSearchRange.start) params.set("start", activeSearchRange.start);
+        if (activeSearchRange.end) params.set("end", activeSearchRange.end);
+      }
+      if (filterType.value === "motion") params.set("trigger", "motion");
 
-      recordingsBody.innerHTML = filtered.map((r) => `
+      const recordings = await PiNVR.api(`/recordings?${params.toString()}`);
+
+      recordingsBody.innerHTML = recordings.map((r) => `
         <tr>
           <td>${new Date(r.started_at).toLocaleString()}</td>
           <td>${r.trigger}</td>
@@ -57,7 +65,7 @@
             <a class="btn" href="/api/playback/download/${r.id}" style="padding:4px 8px;">DL</a>
             <button class="btn btn-danger" data-delete="${r.id}" ${r.locked ? "disabled" : ""} style="padding:4px 8px;">Del</button>
           </td>
-        </tr>`).join("");
+        </tr>`).join("") || `<tr><td colspan="5" style="color:var(--text-faint);">No recordings match.</td></tr>`;
     } catch (e) { PiNVR.toast(e.message, true); }
   }
 
@@ -65,6 +73,23 @@
     loadCalendar();
     loadRecordings();
   }
+
+  document.getElementById("searchBtn").addEventListener("click", () => {
+    if (!searchStart.value && !searchEnd.value) {
+      PiNVR.toast("Enter at least a start or end time to search", true);
+      return;
+    }
+    activeSearchRange = { start: searchStart.value || null, end: searchEnd.value || null };
+    PiNVR.toast("Searching…");
+    loadRecordings();
+  });
+
+  document.getElementById("clearSearchBtn").addEventListener("click", () => {
+    activeSearchRange = null;
+    searchStart.value = "";
+    searchEnd.value = "";
+    loadRecordings();
+  });
 
   recordingsBody.addEventListener("click", async (e) => {
     const playId = e.target.getAttribute("data-play");

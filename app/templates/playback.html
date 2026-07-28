@@ -13,6 +13,20 @@
       <input id="monthSelect" type="month" />
     </div>
     <div id="calendarDays"></div>
+    <div class="section-title">Search by date &amp; time</div>
+    <p style="color:var(--text-dim); font-size:11px; margin:-6px 0 10px;">
+      Find footage from a specific window, e.g. overnight between two times.
+    </p>
+    <div class="field">
+      <label for="searchStart">From</label>
+      <input id="searchStart" type="datetime-local" />
+    </div>
+    <div class="field">
+      <label for="searchEnd">To</label>
+      <input id="searchEnd" type="datetime-local" />
+    </div>
+    <button class="btn" id="searchBtn" style="width:100%; justify-content:center; margin-bottom:6px;">Search</button>
+    <button class="btn" id="clearSearchBtn" style="width:100%; justify-content:center;">Clear search</button>
     <div class="section-title">Filter</div>
     <div class="field">
       <label for="filterType">Show</label>

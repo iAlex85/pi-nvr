@@ -6,6 +6,11 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Search recordings by date & time range** (Playback page): find
+  footage from a specific window (e.g. "overnight between 10pm and 6am
+  last Tuesday") instead of only browsing whole days via the calendar.
+  Backend `/api/recordings` now accepts `start`/`end` (ISO datetime) and
+  `trigger` filters alongside the existing `camera_id` filter.
 - **PTZ joystick controls** (Live view): cameras with `supports_ptz` show
   a directional pad overlay (up/down/left/right/zoom/home) directly on
   their live-view tile -- press and hold to move, release to stop.

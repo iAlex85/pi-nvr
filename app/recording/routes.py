@@ -53,12 +53,39 @@ def recording_active(camera_id: int, request: Request, user: User = Depends(get_
 @router.get("", response_model=list[RecordingOut])
 def list_recordings(
     camera_id: int | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    trigger: str | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """Lists recordings, optionally filtered by camera, an ISO 8601
+    date/time range (`start`/`end`, either or both), and trigger type
+    (continuous/motion/manual/scheduled). This is what powers the
+    Playback page's "search by date & time" panel -- e.g. `start` and
+    `end` set to the same day but different times finds footage from a
+    specific window, like "what happened between 10pm and 6am last
+    Tuesday" rather than only being able to browse by whole days."""
+    import datetime
+
     query = db.query(Recording)
     if camera_id is not None:
         query = query.filter(Recording.camera_id == camera_id)
+    if trigger:
+        query = query.filter(Recording.trigger == trigger)
+    if start:
+        try:
+            start_dt = datetime.datetime.fromisoformat(start)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid start datetime: {start}") from exc
+        query = query.filter(Recording.started_at >= start_dt)
+    if end:
+        try:
+            end_dt = datetime.datetime.fromisoformat(end)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid end datetime: {end}") from exc
+        query = query.filter(Recording.started_at <= end_dt)
+
     return [
         RecordingOut(
             id=r.id,
