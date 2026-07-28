@@ -6,6 +6,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **AI features section** (Settings, beta/preview): toggles for object
+  detection, people recognition, and animal detection. Honestly labeled
+  as **not yet implemented** -- these just persist the preference in
+  config (`ai.*`) for a future update that adds real detection on more
+  capable hardware (Pi 4/5 with a Coral/Hailo accelerator, or x86).
+  Continuous neural-network inference per camera is genuinely too heavy
+  for a Pi 3 to do well, so this deliberately doesn't pretend to work
+  today rather than silently doing nothing when enabled.
 - **Search recordings by date & time range** (Playback page): find
   footage from a specific window (e.g. "overnight between 10pm and 6am
   last Tuesday") instead of only browsing whole days via the calendar.

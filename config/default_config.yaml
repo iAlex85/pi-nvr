@@ -80,5 +80,20 @@ system:
   timezone: "UTC"
   language: "en"
 
+# AI-assisted detection features. Disabled by default and, as of this
+# version, NOT YET IMPLEMENTED -- these toggles exist so the setting is
+# saved and forward-compatible with a future update that adds real
+# object/face/animal detection, without needing a config migration then.
+# Object detection in particular needs a neural network inference engine
+# running continuously per camera, which is genuinely too heavy for a
+# Raspberry Pi 3 to do well; this is intended for more capable hardware
+# (Pi 4/5 with a Coral/Hailo accelerator, or an x86 host). The Settings
+# UI reflects this honestly rather than pretending the toggle does
+# something today.
+ai:
+  object_detection_enabled: false
+  people_detection_enabled: false
+  animal_detection_enabled: false
+
 plugins:
   enabled: []
