@@ -18,12 +18,18 @@
       Find footage from a specific window, e.g. overnight between two times.
     </p>
     <div class="field">
-      <label for="searchStart">From</label>
-      <input id="searchStart" type="datetime-local" />
+      <label>From</label>
+      <div style="display:flex; gap:6px;">
+        <input id="searchStartDate" type="date" style="flex:1.3;" />
+        <input id="searchStartTime" type="time" style="flex:1;" />
+      </div>
     </div>
     <div class="field">
-      <label for="searchEnd">To</label>
-      <input id="searchEnd" type="datetime-local" />
+      <label>To</label>
+      <div style="display:flex; gap:6px;">
+        <input id="searchEndDate" type="date" style="flex:1.3;" />
+        <input id="searchEndTime" type="time" style="flex:1;" />
+      </div>
     </div>
     <button class="btn" id="searchBtn" style="width:100%; justify-content:center; margin-bottom:6px;">Search</button>
     <button class="btn" id="clearSearchBtn" style="width:100%; justify-content:center;">Clear search</button>
@@ -47,5 +53,5 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="/static/js/playback.js"></script>
+<script src="/static/js/playback.js?v={{ static_version }}"></script>
 {% endblock %}

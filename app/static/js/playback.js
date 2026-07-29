@@ -5,8 +5,10 @@
   const calendarDays = document.getElementById("calendarDays");
   const recordingsBody = document.getElementById("recordingsBody");
   const player = document.getElementById("player");
-  const searchStart = document.getElementById("searchStart");
-  const searchEnd = document.getElementById("searchEnd");
+  const searchStartDate = document.getElementById("searchStartDate");
+  const searchStartTime = document.getElementById("searchStartTime");
+  const searchEndDate = document.getElementById("searchEndDate");
+  const searchEndTime = document.getElementById("searchEndTime");
 
   let activeSearchRange = null; // {start, end} while a date/time search is active, else null
 
@@ -74,20 +76,32 @@
     loadRecordings();
   }
 
+  function combineDateTime(dateVal, timeVal, isEnd) {
+    if (!dateVal) return null;
+    // If a date is picked with no time, default to the very start/end of
+    // that day so "search just a date" behaves like "search that whole day".
+    const time = timeVal || (isEnd ? "23:59" : "00:00");
+    return `${dateVal}T${time}:00`;
+  }
+
   document.getElementById("searchBtn").addEventListener("click", () => {
-    if (!searchStart.value && !searchEnd.value) {
-      PiNVR.toast("Enter at least a start or end time to search", true);
+    const start = combineDateTime(searchStartDate.value, searchStartTime.value, false);
+    const end = combineDateTime(searchEndDate.value, searchEndTime.value, true);
+    if (!start && !end) {
+      PiNVR.toast("Enter at least a start or end date to search", true);
       return;
     }
-    activeSearchRange = { start: searchStart.value || null, end: searchEnd.value || null };
+    activeSearchRange = { start, end };
     PiNVR.toast("Searching…");
     loadRecordings();
   });
 
   document.getElementById("clearSearchBtn").addEventListener("click", () => {
     activeSearchRange = null;
-    searchStart.value = "";
-    searchEnd.value = "";
+    searchStartDate.value = "";
+    searchStartTime.value = "";
+    searchEndDate.value = "";
+    searchEndTime.value = "";
     loadRecordings();
   });
 

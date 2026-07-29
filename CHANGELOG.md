@@ -73,6 +73,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Changed
+- Playback's date/time search now uses separate date and time inputs
+  instead of a single `datetime-local` field -- Safari renders
+  `datetime-local` as a plain text box with no picker UI, while separate
+  `date`/`time` inputs get a proper native calendar dropdown and
+  spinner-arrow time picker consistently across browsers.
+- Removed "Restart Raspberry Pi" and "Shut down Raspberry Pi" from
+  Settings (UI and backend endpoints both removed) -- "Restart Pi-NVR
+  service" remains for restarting just the application.
 - **UI modernization pass**: sidebar navigation now uses clean inline SVG
   icons instead of Unicode symbols, added a left-edge accent indicator on
   the active nav item, smooth transitions on buttons/cards/inputs/nav
@@ -85,6 +93,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   rail's signature glow.
 
 ### Fixed
+- UI changes to CSS/JS (colors, new features like the favorite-camera
+  star) could silently fail to appear after an update, since browsers
+  cache static files and nothing ever told them a new version existed.
+  All CSS/JS references now include a cache-busting `?v=` query param
+  set once per process start, so a service restart automatically forces
+  browsers to fetch fresh files instead of requiring a manual hard
+  refresh.
 - Confirmed fix: navigating away from and back to Live view now reliably
   reconnects (verified via the new diagnostic logging) -- the combination
   of active per-camera stream tracking, the settling delay/retry, and the

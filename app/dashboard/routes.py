@@ -117,24 +117,6 @@ def restart_service(user: User = Depends(require_admin)):
     return {"ok": True}
 
 
-@router.post("/restart-device")
-def restart_device(user: User = Depends(require_admin)):
-    try:
-        subprocess.run(["sudo", "reboot"], check=True, timeout=10)
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        raise HTTPException(status_code=500, detail=f"Could not reboot: {exc}") from exc
-    return {"ok": True}
-
-
-@router.post("/shutdown-device")
-def shutdown_device(user: User = Depends(require_admin)):
-    try:
-        subprocess.run(["sudo", "shutdown", "-h", "now"], check=True, timeout=10)
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        raise HTTPException(status_code=500, detail=f"Could not shut down: {exc}") from exc
-    return {"ok": True}
-
-
 @router.get("/backup")
 def export_backup(user: User = Depends(require_admin)):
     """Bundles config.yaml + the SQLite DB into a single tarball the user

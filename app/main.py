@@ -10,6 +10,7 @@ which sets PI_NVR_CONFIG to point at /etc/pi-nvr/config.yaml.
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -34,6 +35,13 @@ logger = logging.getLogger("pi_nvr")
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+# Cache-busting query param appended to CSS/JS URLs (?v=...) in templates.
+# Set once when the process starts, so every deploy/service-restart
+# forces browsers to fetch fresh static files instead of serving a
+# stale cached copy of the old CSS/JS -- otherwise a UI change can
+# silently "not show up" until someone thinks to hard-refresh, which
+# isn't obvious and isn't something to rely on.
+templates.env.globals["static_version"] = str(int(time.time()))
 
 
 @asynccontextmanager

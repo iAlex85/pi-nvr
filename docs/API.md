@@ -88,7 +88,6 @@ truth for exact request/response schemas.
 | GET | `/logs/download` | Download the raw log file (admin) |
 | GET/PUT | `/settings` | Read/write the full config (admin) |
 | POST | `/restart-service` | `systemctl restart pi-nvr` (admin) |
-| POST | `/restart-device` / `/shutdown-device` | Reboot / power off the Pi (admin) |
 | GET | `/backup` | Download a config+DB backup tarball (admin) |
 | POST | `/restore` | Upload and restore a backup tarball (admin) |
 

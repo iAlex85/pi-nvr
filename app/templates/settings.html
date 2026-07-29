@@ -14,8 +14,6 @@
 <div class="section-title">System</div>
 <div class="card" style="max-width:420px; margin-bottom:24px; display:flex; flex-direction:column; gap:10px; align-items:flex-start;">
   <button class="btn" id="restartServiceBtn">Restart Pi-NVR service</button>
-  <button class="btn btn-danger" id="restartDeviceBtn">Restart Raspberry Pi</button>
-  <button class="btn btn-danger" id="shutdownDeviceBtn">Shut down Raspberry Pi</button>
 </div>
 
 <div class="section-title">AI features <span style="color:var(--text-faint); text-transform:none; letter-spacing:normal;">(beta / preview)</span></div>
@@ -121,10 +119,6 @@
 
   document.getElementById("restartServiceBtn").addEventListener("click", () =>
     confirmAction("Restart the Pi-NVR service now?", "/system/restart-service"));
-  document.getElementById("restartDeviceBtn").addEventListener("click", () =>
-    confirmAction("Restart the Raspberry Pi now? All recording will pause briefly.", "/system/restart-device"));
-  document.getElementById("shutdownDeviceBtn").addEventListener("click", () =>
-    confirmAction("Shut down the Raspberry Pi? You'll need physical/remote power access to turn it back on.", "/system/shutdown-device"));
 
   document.getElementById("restoreForm").addEventListener("submit", async (e) => {
     e.preventDefault();
