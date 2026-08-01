@@ -36,7 +36,14 @@ from app.models import Camera
 
 logger = logging.getLogger("pi_nvr.cameras")
 
-PROBE_INTERVAL_SECONDS = 45
+# Default probe interval. Kept fairly quick now that the recording-skip
+# optimization below (see _probe_once) already prevents the specific
+# contention scenario that motivated a much slower default previously --
+# a probe running concurrently with an active recording connection on a
+# single-RTSP-client camera. With that handled separately, polling faster
+# for cameras that *aren't* currently recording is safe and gives much
+# quicker offline/online detection. Override via cameras.probe_interval_seconds.
+DEFAULT_PROBE_INTERVAL_SECONDS = 20
 PROBE_TIMEOUT_SECONDS = 8
 
 
@@ -58,12 +65,20 @@ class CameraManager:
         self._tasks: dict[int, asyncio.Task] = {}
         self._running = False
         # Set post-construction from app/main.py's lifespan, once
-        # RecordingEngine exists. Optional by design -- CameraManager must
-        # still work (e.g. in tests) without it wired up.
+        # RecordingEngine/NotificationManager exist. Optional by design --
+        # CameraManager must still work (e.g. in tests) without them wired up.
         self._recording_engine = None
+        self._notifications = None
 
     def set_recording_engine(self, recording_engine) -> None:
         self._recording_engine = recording_engine
+
+    def set_notifications(self, notifications) -> None:
+        self._notifications = notifications
+
+    @property
+    def _probe_interval(self) -> float:
+        return self.cfg.get("cameras.probe_interval_seconds", DEFAULT_PROBE_INTERVAL_SECONDS)
 
     async def start(self) -> None:
         self._running = True
@@ -111,7 +126,7 @@ class CameraManager:
                 raise
             except Exception as exc:  # noqa: BLE001 - keep the loop alive
                 logger.exception("Unexpected error probing camera %s: %s", camera_id, exc)
-            await asyncio.sleep(PROBE_INTERVAL_SECONDS)
+            await asyncio.sleep(self._probe_interval)
 
     async def _probe_once(self, camera_id: int) -> None:
         if self._recording_engine is not None and self._recording_engine.is_recording(camera_id):
@@ -131,6 +146,7 @@ class CameraManager:
                 await self.unwatch_camera(camera_id)
                 return
             rtsp_url = build_authenticated_rtsp_url(camera)
+            camera_name = camera.name
 
         status = self._status.setdefault(camera_id, CameraStatus(camera_id=camera_id))
 
@@ -157,17 +173,20 @@ class CameraManager:
                 proc.communicate(), timeout=PROBE_TIMEOUT_SECONDS + 3
             )
         except asyncio.TimeoutError:
-            self._mark_offline(status, "probe timed out")
+            self._mark_offline(status, "probe timed out", camera_name)
             return
 
         if proc.returncode != 0:
-            self._mark_offline(status, stderr.decode(errors="replace")[:200])
+            self._mark_offline(status, stderr.decode(errors="replace")[:200], camera_name)
             return
 
+        was_offline = not status.online
         status.online = True
         status.last_seen = time.time()
         status.last_error = None
         status.consecutive_failures = 0
+        if was_offline:
+            self._notify(camera_id, "camera_online", camera_name)
 
         for line in stdout.decode(errors="replace").splitlines():
             if line.startswith("r_frame_rate="):
@@ -175,7 +194,7 @@ class CameraManager:
             elif line.startswith("bit_rate=") and line.split("=", 1)[1].isdigit():
                 status.bitrate_kbps = int(line.split("=", 1)[1]) / 1000
 
-    def _mark_offline(self, status: CameraStatus, error: str) -> None:
+    def _mark_offline(self, status: CameraStatus, error: str, camera_name: str = "") -> None:
         was_online = status.online
         status.online = False
         status.last_error = error
@@ -184,6 +203,14 @@ class CameraManager:
             logger.warning(
                 "Camera %s went offline: %s", status.camera_id, error
             )
+            self._notify(status.camera_id, "camera_offline", camera_name)
+
+    def _notify(self, camera_id: int, event_type: str, camera_name: str) -> None:
+        if self._notifications is None:
+            return
+        asyncio.create_task(
+            self._notifications.publish(event_type, {"camera_id": camera_id, "camera_name": camera_name})
+        )
 
 
 def _parse_frame_rate(raw: str) -> float | None:

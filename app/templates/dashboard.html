@@ -53,7 +53,7 @@
         tile.className = "camera-tile";
         tile.innerHTML = `
           <img src="/api/playback/snapshot/${cam.id}/latest" alt="${cam.name}" loading="lazy"
-               onerror="this.style.opacity=0.15" />
+               onerror="handleMissingSnapshot(${cam.id}, this)" />
           <div class="tile-label">
             ${cam.name}
             <span class="badge ${s.online ? "badge-online" : "badge-offline"}">${s.online ? "ONLINE" : "OFFLINE"}</span>
@@ -61,6 +61,22 @@
         grid.appendChild(tile);
       });
     } catch (e) { PiNVR.toast(e.message, true); }
+  }
+
+  // A camera with no snapshot yet (e.g. just added) 404s on the "latest"
+  // endpoint -- rather than leaving the tile permanently dim, capture one
+  // now and retry once. If the camera is genuinely offline this will also
+  // fail and the tile stays dim, which is the correct outcome.
+  const snapshotRetried = new Set();
+  async function handleMissingSnapshot(camId, imgEl) {
+    imgEl.style.opacity = 0.15;
+    if (snapshotRetried.has(camId)) return; // avoid retry loops
+    snapshotRetried.add(camId);
+    try {
+      await PiNVR.api(`/playback/snapshot/${camId}`, { method: "POST" });
+      imgEl.src = `/api/playback/snapshot/${camId}/latest?t=${Date.now()}`;
+      imgEl.style.opacity = 1;
+    } catch (e) { /* camera likely offline -- leave dim, nothing more to do */ }
   }
 
   loadDashboard();

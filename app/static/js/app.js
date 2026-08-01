@@ -96,14 +96,51 @@ const PiNVR = (() => {
     } catch (_) { /* not authenticated yet */ }
   }
 
+  const EVENT_MESSAGES = {
+    motion: (data) => `Motion: ${data.camera_name}`,
+    camera_offline: (data) => `${data.camera_name} went offline`,
+    camera_online: (data) => `${data.camera_name} is back online`,
+    storage_full: (data) => `Storage full: ${data.target_name || "a storage target"}`,
+    low_disk_space: (data) => `Low disk space: ${data.target_name || "a storage target"}`,
+    recording_stopped: (data) => `Recording stopped: ${data.camera_name || "a camera"}`,
+  };
+
+  function maybeRequestNotificationPermission() {
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "default") {
+      // Best-effort -- some browsers only honor this from a direct user
+      // gesture and will silently ignore it here, which is fine; toasts
+      // remain the fallback either way.
+      Notification.requestPermission().catch(() => {});
+    }
+  }
+
+  function showBrowserNotification(title, body) {
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    // Only worth the OS-level notification if the tab isn't the one
+    // currently in focus -- if someone's already looking at Pi-NVR, the
+    // in-page toast is enough and a duplicate OS popup is just noise.
+    if (document.visibilityState === "visible") return;
+    try {
+      new Notification(title, { body });
+    } catch (_) { /* not fatal -- toast already covers this event */ }
+  }
+
   function connectWebSocket(onEvent) {
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${proto}://${window.location.host}/api/ws`);
     ws.onmessage = (msg) => {
       try {
         const parsed = JSON.parse(msg.data);
-        if (parsed.type === "motion") {
-          toast(`Motion: ${parsed.data.camera_name}`);
+        const messageFn = EVENT_MESSAGES[parsed.type];
+        if (messageFn) {
+          const text = messageFn(parsed.data || {});
+          const isProblem = parsed.type === "camera_offline" || parsed.type === "storage_full" || parsed.type === "low_disk_space";
+          toast(text, isProblem);
+          showBrowserNotification("Pi-NVR", text);
+          if (parsed.type === "camera_offline" || parsed.type === "camera_online") {
+            refreshStatusRail(); // don't wait up to 10s for the next scheduled poll
+          }
         }
         if (onEvent) onEvent(parsed);
       } catch (_) { /* ignore malformed frames */ }
@@ -140,6 +177,7 @@ const PiNVR = (() => {
     }
     if (document.getElementById("statusRail") || document.getElementById("topbarStats")) {
       connectWebSocket();
+      maybeRequestNotificationPermission();
     }
   }
 

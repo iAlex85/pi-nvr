@@ -3,14 +3,29 @@
 {% block page_title %}Live view{% endblock %}
 {% block content %}
 <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
-  <div class="section-title" style="margin:0;">Layout</div>
-  <button class="btn" data-layout="1">1</button>
-  <button class="btn" data-layout="4">4</button>
-  <button class="btn" data-layout="9">9</button>
+  <div class="section-title" style="margin:0;">View</div>
+  <button class="btn" data-view="spotlight">Spotlight</button>
+  <button class="btn" data-view="grid">All cameras</button>
   <div style="flex:1;"></div>
   <button class="btn" id="fullscreenBtn">Fullscreen</button>
 </div>
-<div class="camera-grid" id="liveGrid"></div>
+
+<!-- Spotlight: one large featured camera, with the rest as clickable
+     thumbnails along the right edge and bottom edge (an "inverted L"
+     framing the main view). Clicking a thumbnail makes it the featured
+     camera. Thumbnails are periodically-refreshed snapshots, not live
+     streams -- keeping many simultaneous live decodes off the table,
+     which matters given how little headroom a Pi 3 has and how many
+     budget cameras only tolerate one active connection at a time. -->
+<div class="spotlight-layout" id="spotlightLayout" style="display:none;">
+  <div class="spotlight-main" id="spotlightMain"></div>
+  <div class="spotlight-side" id="spotlightSide"></div>
+  <div class="spotlight-bottom" id="spotlightBottom"></div>
+</div>
+
+<!-- All cameras: every camera shown live, equally sized. Clicking any
+     tile switches to Spotlight with that camera featured. -->
+<div class="camera-grid" id="gridLayout"></div>
 {% endblock %}
 {% block scripts %}
 <script src="/static/js/live.js?v={{ static_version }}"></script>

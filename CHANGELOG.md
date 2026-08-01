@@ -6,6 +6,24 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Live view redesign**: replaced the 1/4/9 layout buttons with two
+  modes -- **Spotlight** (one large featured camera with the rest as
+  clickable thumbnails along the right and bottom edges, forming an
+  inverted L around the main view) and **All cameras** (equal grid of
+  every camera, live). Clicking any thumbnail or grid tile features that
+  camera in Spotlight. Spotlight's side/bottom thumbnails are
+  periodically-refreshed snapshots rather than additional live streams,
+  deliberately avoiding piling up simultaneous live decodes as more
+  cameras are added.
+- **Notifications for camera offline/online**, alongside the existing
+  motion notifications -- both now show as in-page toasts and, when the
+  tab isn't focused, real OS-level browser notifications (permission
+  requested once automatically). Also wired into the existing email
+  notification path, so these are email-eligible the same as motion
+  events once SMTP is configured.
+- Dashboard camera tiles now auto-capture a snapshot the first time one
+  is missing (e.g. a newly-added camera), instead of leaving the tile
+  permanently dim until someone thinks to manually snap it from Live view.
 - **AI features section** (Settings, beta/preview): toggles for object
   detection, people recognition, and animal detection. Honestly labeled
   as **not yet implemented** -- these just persist the preference in
@@ -73,6 +91,11 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Automatically excludes the Tailscale interface and loopback.
 
 ### Changed
+- Camera online/offline detection is faster: default probe interval
+  lowered from 45s to 20s (configurable via
+  `cameras.probe_interval_seconds`). Safe to lower now that the
+  skip-probe-while-recording optimization already prevents the specific
+  connection contention the slower interval was originally added for.
 - Playback's date/time search now uses separate date and time inputs
   instead of a single `datetime-local` field -- Safari renders
   `datetime-local` as a plain text box with no picker UI, while separate

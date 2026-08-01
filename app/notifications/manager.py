@@ -20,6 +20,7 @@ logger = logging.getLogger("pi_nvr.notifications")
 EMAIL_SUBJECTS = {
     "motion": "Motion detected",
     "camera_offline": "Camera offline",
+    "camera_online": "Camera back online",
     "storage_full": "Storage full",
     "recording_stopped": "Recording stopped",
     "low_disk_space": "Low disk space",
