@@ -5,6 +5,31 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+- **PTZ detection now reports why, not just whether**: `POST
+  /cameras/{id}/ptz/detect` and `ptz.get_capabilities()` used to return a
+  flat `supports_ptz: bool`, so a genuinely-unsupported camera, a camera
+  with empty ONVIF host/port/credential fields, and a raw-SOAP-fallback
+  path guess that just didn't match the firmware all produced the
+  identical "This camera does not support ONVIF PTZ" message -- no way
+  to tell which without reading server logs. Now returns
+  `{supported, detail}`, pinning down exactly which stage failed
+  (missing ONVIF fields on the camera form / standard ONVIF error /
+  raw fallback couldn't get a profile token / raw fallback couldn't
+  resolve a PTZ service path), and Live view's "Check for PTZ" toast
+  shows that detail directly.
+- **Audio listen now fails loudly instead of silently**: if the
+  ffmpeg process behind `/api/cameras/{id}/audio` dies immediately
+  (all retry attempts exhausted -- typically because this hardware
+  only tolerates one RTSP connection at a time and Live view's video
+  stream is already holding it), the endpoint now returns a real
+  `503` with the actual ffmpeg stderr instead of an empty response
+  body, which the browser was previously reporting as a generic,
+  unhelpful `AbortError: the operation was aborted`. The Listen
+  button's error toast now also names the likely cause (video stream
+  already open for the same camera) rather than just echoing that
+  generic browser message.
+
 ### Added
 - **Raw SOAP PTZ fallback** (`app/cameras/onvif_raw.py`): for cameras
   whose firmware fails standard ONVIF capability negotiation

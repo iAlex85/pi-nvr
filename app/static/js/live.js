@@ -172,6 +172,25 @@
 
   // ---- interactions ----
 
+  // The <audio> element's own 'error' event catches failures that happen
+  // *after* play() was accepted (e.g. the stream connects then the
+  // camera drops it) -- the play().catch() below only catches failures
+  // at the initial play() call itself. Both funnel through the same
+  // user-facing message since neither can see the backend's actual
+  // error detail (browsers don't expose response bodies to <audio>).
+  spotlightAudio.addEventListener("error", () => {
+    if (listeningCameraId == null) return; // already stopped deliberately, not a real failure
+    PiNVR.toast(
+      "Camera audio stopped unexpectedly. If Live view video for this " +
+      "camera is open at the same time, this hardware may only allow " +
+      "one connection at a time.",
+      true
+    );
+    const btn = spotlightMain.querySelector(`[data-listen="${listeningCameraId}"]`);
+    if (btn) { btn.textContent = "🔊"; btn.title = "Listen to camera audio"; }
+    listeningCameraId = null;
+  });
+
   function toggleListen(camIdRaw) {
     const camId = parseInt(camIdRaw, 10);
     const btn = spotlightMain.querySelector(`[data-listen="${camId}"]`);
@@ -187,7 +206,12 @@
     spotlightAudio.pause();
     spotlightAudio.src = `/api/cameras/${camId}/audio?t=${Date.now()}`;
     spotlightAudio.play().catch((err) => {
-      PiNVR.toast("Could not start audio: " + err.message, true);
+      PiNVR.toast(
+        "Could not start audio: " + err.message + ". If Live view video " +
+        "for this camera is open at the same time, this hardware may " +
+        "only allow one connection at a time.",
+        true
+      );
       listeningCameraId = null;
       if (btn) { btn.textContent = "🔊"; btn.title = "Listen to camera audio"; }
     });
@@ -238,14 +262,18 @@
     if (detectId) {
       PiNVR.toast("Checking for PTZ support…");
       PiNVR.api(`/cameras/${detectId}/ptz/detect`, { method: "POST" }).then((result) => {
-        if (result.supports_ptz) {
+        if (result.supported) {
           PiNVR.toast("PTZ supported — controls added");
           const cam = cameras.find((c) => c.id === parseInt(detectId, 10));
           if (cam) cam.supports_ptz = true;
           renderedMainCameraId = null;
           renderCurrentView();
         } else {
-          PiNVR.toast("This camera does not support ONVIF PTZ", true);
+          // Show the specific reason (unset ONVIF fields, which stage of
+          // the raw SOAP fallback failed, etc.) instead of a flat
+          // "not supported" -- that detail is what actually lets you fix
+          // it without digging through server logs.
+          PiNVR.toast(result.detail || "This camera does not support ONVIF PTZ", true);
         }
       }).catch((err) => PiNVR.toast(err.message, true));
       return;

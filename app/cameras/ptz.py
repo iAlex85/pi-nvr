@@ -170,24 +170,79 @@ async def set_preset(camera: Camera, name: str) -> str:
     return result  # ONVIF returns the new preset token
 
 
-async def get_capabilities(camera: Camera) -> bool:
-    """Returns True if the camera advertises PTZ support at all. Tries
-    standard ONVIF first, then the raw SOAP fallback (which can only
-    confirm a profile + PTZ service path exist, not read a real
-    PTZConfiguration flag -- so it's a weaker "probably supports PTZ"
-    signal, used only when standard negotiation fails outright)."""
+async def get_capabilities(camera: Camera) -> dict:
+    """Returns {"supported": bool, "detail": str}. Previously this was a
+    flat bool, which meant a genuinely-unsupported camera, an empty ONVIF
+    host field, and a raw-fallback path guess that just didn't match this
+    firmware all produced the identical "not supported" message -- no way
+    to tell them apart without SSHing in and reading logs. The detail
+    string pins down which stage actually failed so that's diagnosable
+    from the UI alone."""
+    if not camera.onvif_host:
+        return {
+            "supported": False,
+            "detail": "No ONVIF host/port configured on this camera -- add "
+                      "them in the camera's edit form (ONVIF Host/Port/"
+                      "Username/Password fields) before checking for PTZ.",
+        }
+
     try:
         client = await _get_camera_client(camera)
         media_service = await client.create_media_service()
         profiles = await media_service.GetProfiles()
-        return any(getattr(p, "PTZConfiguration", None) is not None for p in profiles)
+        supported = any(getattr(p, "PTZConfiguration", None) is not None for p in profiles)
+        return {
+            "supported": supported,
+            "detail": (
+                "Detected via standard ONVIF." if supported
+                else "Standard ONVIF connected, but the camera reports no "
+                     "PTZ configuration on any media profile."
+            ),
+        }
     except Exception as exc:  # noqa: BLE001
         logger.info(
             "PTZ get_capabilities: standard ONVIF failed for camera=%s (%s), trying raw SOAP fallback",
             camera.id, exc,
         )
+        standard_error = str(exc) or type(exc).__name__
+
         try:
             host, port, username, password = _raw_creds(camera)
-            return await onvif_raw.raw_detect(host, port, username, password)
-        except Exception:  # noqa: BLE001
-            return False
+        except PTZUnsupportedError as raw_exc:
+            return {"supported": False, "detail": f"Standard ONVIF failed ({standard_error}); {raw_exc}"}
+
+        try:
+            profile_token = await onvif_raw.get_profile_token(host, port, username, password)
+        except onvif_raw.RawPTZError as raw_exc:
+            return {
+                "supported": False,
+                "detail": (
+                    f"Standard ONVIF failed ({standard_error}). Raw SOAP "
+                    f"fallback also failed getting a media profile: {raw_exc}. "
+                    "This usually means the guessed service paths in "
+                    "onvif_raw.py don't match this camera's firmware, or "
+                    "the ONVIF host/port/credentials are wrong."
+                ),
+            }
+
+        import httpx
+        try:
+            async with httpx.AsyncClient() as raw_client:
+                await onvif_raw._resolve_ptz_url(
+                    raw_client, f"http://{host}:{port}", username, password, profile_token
+                )
+        except onvif_raw.RawPTZError as raw_exc:
+            return {
+                "supported": False,
+                "detail": (
+                    f"Standard ONVIF failed ({standard_error}). Raw SOAP "
+                    f"fallback got a media profile token but no PTZ service "
+                    f"path answered: {raw_exc}."
+                ),
+            }
+
+        return {
+            "supported": True,
+            "detail": "Detected via raw SOAP fallback (standard ONVIF "
+                      "capability negotiation failed on this firmware).",
+        }
