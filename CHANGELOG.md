@@ -5,6 +5,26 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **PTZ "keeps rotating until Home is pressed"**: the raw SOAP fallback
+  treated any parseable XML response as success, including SOAP Faults
+  -- a logically-failed request (camera saying "no") looks identical to
+  a real success at the XML-parsing level, so a `Stop` command the
+  camera actually rejected was being reported as if it worked. Cheap PTZ
+  firmware commonly implements `ContinuousMove` but rejects/ignores
+  `Stop` outright, which matches this symptom exactly (movement doesn't
+  actually start looping forever -- `Stop` was just silently failing
+  every time). `onvif_raw.py` now inspects responses for a SOAP Fault
+  and, specifically for `Stop`, falls back to sending a zero-velocity
+  `ContinuousMove` (a well-known workaround -- "move at 0 speed" is
+  functionally a halt, and firmware that accepts `ContinuousMove` at all
+  tends to honor it even when it won't honor `Stop`). `ContinuousMove`
+  and `GotoHomePosition` also now raise on a detected Fault instead of
+  reporting success. PTZ endpoints and the auto-stop safety timer now
+  log/surface these failures instead of swallowing them silently, so a
+  still-broken Stop will show up as a toast or in `journalctl` instead
+  of just looking like nothing happened.
+
 ### Changed
 - **PTZ detection now reports why, not just whether**: `POST
   /cameras/{id}/ptz/detect` and `ptz.get_capabilities()` used to return a

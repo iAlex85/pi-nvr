@@ -178,6 +178,26 @@ async def get_profile_token(host: str, port: int, username: str, password: str) 
         return token
 
 
+def _extract_fault_reason(root: ET.Element) -> str | None:
+    """A SOAP response can be well-formed XML and still mean "no": a SOAP
+    Fault is a normal, successfully-parsed envelope, not a connection
+    error, so _post_soap alone can't tell "the camera did it" apart from
+    "the camera understood the request and refused it". Cheap PTZ
+    firmware commonly faults on Stop specifically while happily accepting
+    ContinuousMove -- silently treating that fault as success is exactly
+    how a directional button ends up spinning the camera forever with no
+    way to halt it short of GotoHomePosition. Returns the fault reason
+    text if this response is a fault, else None."""
+    for el in root.iter():
+        if el.tag.endswith("Fault"):
+            for child in el.iter():
+                tag = child.tag.rsplit("}", 1)[-1]
+                if tag in ("Text", "Reason", "faultstring") and child.text:
+                    return child.text.strip()
+            return "camera returned a SOAP fault with no reason text"
+    return None
+
+
 def _continuous_move_body(profile_token: str, pan: float, tilt: float, zoom: float) -> str:
     return f"""<tptz:ContinuousMove xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">
   <tptz:ProfileToken>{profile_token}</tptz:ProfileToken>
@@ -219,6 +239,9 @@ async def raw_move(host: str, port: int, username: str, password: str, pan: floa
         root = await _post_soap(client, ptz_url, envelope)
         if root is None:
             raise RawPTZError("ContinuousMove request failed")
+        fault = _extract_fault_reason(root)
+        if fault:
+            raise RawPTZError(f"Camera rejected ContinuousMove: {fault}")
         logger.info("onvif_raw: move host=%s pan=%s tilt=%s zoom=%s", host, pan, tilt, zoom)
 
 
@@ -229,8 +252,26 @@ async def raw_stop(host: str, port: int, username: str, password: str) -> None:
         ptz_url = await _resolve_ptz_url(client, base_url, username, password, profile_token)
         envelope = _envelope(_stop_body(profile_token), username, password)
         root = await _post_soap(client, ptz_url, envelope)
-        if root is None:
-            raise RawPTZError("Stop request failed")
+        fault = _extract_fault_reason(root) if root is not None else "no response"
+
+        if root is None or fault:
+            # Known cheap-firmware quirk: Stop is rejected/ignored while
+            # ContinuousMove works fine. Zero-velocity ContinuousMove is
+            # the standard workaround -- functionally "move at 0 speed",
+            # which every firmware that accepts ContinuousMove at all
+            # tends to honor as a real halt.
+            logger.warning(
+                "onvif_raw: Stop command failed on %s (%s) -- falling back to zero-velocity ContinuousMove",
+                host, fault,
+            )
+            zero_envelope = _envelope(_continuous_move_body(profile_token, 0.0, 0.0, 0.0), username, password)
+            zero_root = await _post_soap(client, ptz_url, zero_envelope)
+            if zero_root is None:
+                raise RawPTZError(f"Stop failed ({fault}); zero-velocity fallback also failed (no response)")
+            zero_fault = _extract_fault_reason(zero_root)
+            if zero_fault:
+                raise RawPTZError(f"Stop failed ({fault}); zero-velocity fallback also faulted: {zero_fault}")
+            logger.info("onvif_raw: stopped host=%s via zero-velocity ContinuousMove fallback", host)
 
 
 async def raw_go_home(host: str, port: int, username: str, password: str) -> None:
@@ -242,6 +283,9 @@ async def raw_go_home(host: str, port: int, username: str, password: str) -> Non
         root = await _post_soap(client, ptz_url, envelope)
         if root is None:
             raise RawPTZError("GotoHomePosition request failed")
+        fault = _extract_fault_reason(root)
+        if fault:
+            raise RawPTZError(f"Camera rejected GotoHomePosition: {fault}")
 
 
 async def raw_detect(host: str, port: int, username: str, password: str) -> bool:

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_admin, get_current_user
 from app.cameras import onvif_discovery, network_scan, ptz as ptz_mod
+from app.cameras import onvif_raw
 from app.cameras.url_utils import build_authenticated_rtsp_url
 from app.cameras.crypto import encrypt
 from app.database import get_db
@@ -574,6 +575,8 @@ async def ptz_move(camera_id: int, payload: PTZMoveRequest, db: Session = Depend
         await ptz_mod.move(camera, payload.direction, payload.speed)
     except ptz_mod.PTZUnsupportedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except onvif_raw.RawPTZError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True}
@@ -586,6 +589,8 @@ async def ptz_stop(camera_id: int, db: Session = Depends(get_db), user: User = D
         await ptz_mod.stop(camera)
     except ptz_mod.PTZUnsupportedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except onvif_raw.RawPTZError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"ok": True}
 
 
@@ -596,6 +601,8 @@ async def ptz_home(camera_id: int, db: Session = Depends(get_db), user: User = D
         await ptz_mod.go_home(camera)
     except ptz_mod.PTZUnsupportedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except onvif_raw.RawPTZError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"ok": True}
 
 

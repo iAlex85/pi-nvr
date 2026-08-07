@@ -231,7 +231,13 @@
 
   async function ptzStop(camId) {
     try { await PiNVR.api(`/cameras/${camId}/ptz/stop`, { method: "POST" }); }
-    catch (err) { /* auto-stops server-side regardless; no need to surface every failure */ }
+    catch (err) {
+      // Auto-stop also fires server-side as a safety net, but if the
+      // camera's Stop command (and its zero-velocity fallback) both
+      // genuinely failed, staying silent here is how "it just kept
+      // spinning" goes unreported. Surface it.
+      PiNVR.toast("Stop command failed: " + err.message, true);
+    }
   }
 
   function handleContainerClick(e) {

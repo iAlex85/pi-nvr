@@ -105,8 +105,12 @@ async def move(camera: Camera, direction: str, speed: float = DEFAULT_SPEED) -> 
         await asyncio.sleep(AUTO_STOP_SECONDS)
         try:
             await stop(camera)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # This runs detached in the background -- there's no request
+            # to report a failure to, but silently swallowing it here is
+            # exactly how a stuck "still rotating" camera goes
+            # undiagnosed. Log it so journalctl shows the real reason.
+            logger.warning("PTZ auto-stop failed for camera=%s: %s", camera.id, exc)
 
     asyncio.create_task(_auto_stop())
 
