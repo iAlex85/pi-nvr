@@ -6,6 +6,14 @@ manually or found via app/cameras/onvif_discovery.py).
 Continuous-move commands (pan/tilt/zoom directions) are auto-stopped after
 a short duration server-side as a safety net in case the browser never
 sends the corresponding "stop" (e.g. the user closes the tab mid-drag).
+
+Some camera firmware fails standard ONVIF capability negotiation
+(GetCapabilities/update_xaddrs) entirely -- confirmed on a Jooan
+W5-U-US used during development. For those cameras every function below
+falls back automatically to app/cameras/onvif_raw.py, a hand-rolled SOAP
+client that skips negotiation and posts directly to conventional ONVIF
+service paths. The fallback is best-effort and only used when the
+standard path raises; see onvif_raw.py for details and caveats.
 """
 from __future__ import annotations
 
@@ -14,6 +22,7 @@ import logging
 
 from onvif import ONVIFCamera
 
+from app.cameras import onvif_raw
 from app.cameras.crypto import decrypt
 from app.models import Camera
 
@@ -58,21 +67,38 @@ async def _get_profile_token(client: ONVIFCamera) -> str:
     return profiles[0].token
 
 
+def _raw_creds(camera: Camera) -> tuple[str, int, str, str]:
+    if not camera.onvif_host:
+        raise PTZUnsupportedError(f"Camera {camera.id} has no ONVIF host configured")
+    password = decrypt(camera.onvif_password_enc) or ""
+    return camera.onvif_host, camera.onvif_port or 80, camera.onvif_username or "", password
+
+
 async def move(camera: Camera, direction: str, speed: float = DEFAULT_SPEED) -> None:
     if direction not in DIRECTIONS:
         raise ValueError(f"Unknown PTZ direction: {direction}")
     pan, tilt, zoom = DIRECTIONS[direction]
-    client = await _get_camera_client(camera)
-    ptz_service = await client.create_ptz_service()
-    profile_token = await _get_profile_token(client)
 
-    request = ptz_service.create_type("ContinuousMove")
-    request.ProfileToken = profile_token
-    request.Velocity = {
-        "PanTilt": {"x": pan * speed, "y": tilt * speed},
-        "Zoom": {"x": zoom * speed},
-    }
-    await ptz_service.ContinuousMove(request)
+    try:
+        client = await _get_camera_client(camera)
+        ptz_service = await client.create_ptz_service()
+        profile_token = await _get_profile_token(client)
+
+        request = ptz_service.create_type("ContinuousMove")
+        request.ProfileToken = profile_token
+        request.Velocity = {
+            "PanTilt": {"x": pan * speed, "y": tilt * speed},
+            "Zoom": {"x": zoom * speed},
+        }
+        await ptz_service.ContinuousMove(request)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "PTZ move: standard ONVIF failed for camera=%s (%s), trying raw SOAP fallback",
+            camera.id, exc,
+        )
+        host, port, username, password = _raw_creds(camera)
+        await onvif_raw.raw_move(host, port, username, password, pan * speed, tilt * speed, zoom * speed)
+
     logger.info("PTZ move: camera=%s direction=%s speed=%s", camera.id, direction, speed)
 
     async def _auto_stop():
@@ -86,23 +112,39 @@ async def move(camera: Camera, direction: str, speed: float = DEFAULT_SPEED) -> 
 
 
 async def stop(camera: Camera) -> None:
-    client = await _get_camera_client(camera)
-    ptz_service = await client.create_ptz_service()
-    profile_token = await _get_profile_token(client)
-    request = ptz_service.create_type("Stop")
-    request.ProfileToken = profile_token
-    request.PanTilt = True
-    request.Zoom = True
-    await ptz_service.Stop(request)
+    try:
+        client = await _get_camera_client(camera)
+        ptz_service = await client.create_ptz_service()
+        profile_token = await _get_profile_token(client)
+        request = ptz_service.create_type("Stop")
+        request.ProfileToken = profile_token
+        request.PanTilt = True
+        request.Zoom = True
+        await ptz_service.Stop(request)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "PTZ stop: standard ONVIF failed for camera=%s (%s), trying raw SOAP fallback",
+            camera.id, exc,
+        )
+        host, port, username, password = _raw_creds(camera)
+        await onvif_raw.raw_stop(host, port, username, password)
 
 
 async def go_home(camera: Camera) -> None:
-    client = await _get_camera_client(camera)
-    ptz_service = await client.create_ptz_service()
-    profile_token = await _get_profile_token(client)
-    request = ptz_service.create_type("GotoHomePosition")
-    request.ProfileToken = profile_token
-    await ptz_service.GotoHomePosition(request)
+    try:
+        client = await _get_camera_client(camera)
+        ptz_service = await client.create_ptz_service()
+        profile_token = await _get_profile_token(client)
+        request = ptz_service.create_type("GotoHomePosition")
+        request.ProfileToken = profile_token
+        await ptz_service.GotoHomePosition(request)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "PTZ go_home: standard ONVIF failed for camera=%s (%s), trying raw SOAP fallback",
+            camera.id, exc,
+        )
+        host, port, username, password = _raw_creds(camera)
+        await onvif_raw.raw_go_home(host, port, username, password)
 
 
 async def goto_preset(camera: Camera, preset_token: str) -> None:
@@ -129,11 +171,23 @@ async def set_preset(camera: Camera, name: str) -> str:
 
 
 async def get_capabilities(camera: Camera) -> bool:
-    """Returns True if the camera advertises PTZ support at all."""
+    """Returns True if the camera advertises PTZ support at all. Tries
+    standard ONVIF first, then the raw SOAP fallback (which can only
+    confirm a profile + PTZ service path exist, not read a real
+    PTZConfiguration flag -- so it's a weaker "probably supports PTZ"
+    signal, used only when standard negotiation fails outright)."""
     try:
         client = await _get_camera_client(camera)
         media_service = await client.create_media_service()
         profiles = await media_service.GetProfiles()
         return any(getattr(p, "PTZConfiguration", None) is not None for p in profiles)
-    except Exception:  # noqa: BLE001
-        return False
+    except Exception as exc:  # noqa: BLE001
+        logger.info(
+            "PTZ get_capabilities: standard ONVIF failed for camera=%s (%s), trying raw SOAP fallback",
+            camera.id, exc,
+        )
+        try:
+            host, port, username, password = _raw_creds(camera)
+            return await onvif_raw.raw_detect(host, port, username, password)
+        except Exception:  # noqa: BLE001
+            return False

@@ -23,6 +23,13 @@
   <div class="spotlight-bottom" id="spotlightBottom"></div>
 </div>
 
+<!-- Lives outside spotlightMain deliberately -- that container's innerHTML
+     gets replaced whenever the featured camera changes, which would tear
+     down and re-create an <audio> element mid-stream. Kept here instead so
+     JS can control one persistent element regardless of how often the
+     featured tile re-renders. -->
+<audio id="spotlightAudio" style="display:none;"></audio>
+
 <!-- All cameras: every camera shown live, equally sized. Clicking any
      tile switches to Spotlight with that camera featured. -->
 <div class="camera-grid" id="gridLayout"></div>

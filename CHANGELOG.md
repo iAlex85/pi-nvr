@@ -6,6 +6,44 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Raw SOAP PTZ fallback** (`app/cameras/onvif_raw.py`): for cameras
+  whose firmware fails standard ONVIF capability negotiation
+  (`GetCapabilities`/`update_xaddrs`) -- confirmed broken on the Jooan
+  W5-U-US used during development -- PTZ move/stop/home/detect now
+  fall back automatically to a hand-rolled SOAP client. It skips
+  negotiation entirely and posts WS-Security-digest-authenticated
+  envelopes directly to a short list of conventional ONVIF service
+  paths, using whichever one responds. This is inherently best-effort
+  (it works because most ONVIF stacks share the same handful of SDK
+  URL conventions, not because of any spec guarantee), so it's wired as
+  a fallback that only engages when the standard `onvif-zeep-async`
+  path raises -- compliant cameras are unaffected. New diagnostic
+  script `scripts/test_raw_ptz.py` exercises it step-by-step
+  (profile-token resolution → PTZ path resolution → `raw_detect()` →
+  an actual move+stop) against real hardware, with a `--dry-run` mode
+  that stops before physically moving the camera. **Not yet validated
+  against real hardware** -- run the diagnostic script before relying
+  on this in production.
+- **Live audio listen** (Live view, Spotlight main tile): a 🔊 button
+  streams the featured camera's microphone audio to the browser via a
+  new `/api/cameras/{id}/audio` endpoint. The camera's audio is PCM
+  A-law over RTSP, which browsers can't play natively, so ffmpeg
+  transcodes to MP3 on the fly (`-vn` drops video entirely so the Pi
+  isn't wasting CPU decoding frames nobody's watching) and the response
+  streams out as chunked `audio/mpeg`, playable directly via an
+  `<audio>` tag like an internet radio stream. Reuses the live-view
+  MJPEG endpoint's hard-won connection-safety pattern (per-camera lock,
+  kill-old-stream-before-new, settle delay before reconnecting, retry
+  on immediate exit, server-side disconnect detection) with its own
+  separate process/lock tracking, since audio and video are independent
+  ffmpeg processes each competing for the same single-client RTSP slot
+  on this hardware. The `<audio>` element lives outside the
+  Spotlight main tile's re-rendered DOM so switching the featured
+  camera doesn't tear it down mid-stream; listening state resets
+  (rather than silently following you) when you switch cameras or view
+  modes, since carrying it over would mean guessing whether the user
+  still wants to hear the *new* camera. **Just implemented, not yet
+  verified against real hardware.**
 - **Live view redesign**: replaced the 1/4/9 layout buttons with two
   modes -- **Spotlight** (one large featured camera with the rest as
   clickable thumbnails along the right and bottom edges, forming an

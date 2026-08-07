@@ -4,6 +4,7 @@
   const spotlightSide = document.getElementById("spotlightSide");
   const spotlightBottom = document.getElementById("spotlightBottom");
   const gridLayout = document.getElementById("gridLayout");
+  const spotlightAudio = document.getElementById("spotlightAudio");
 
   let cameras = [];
   let viewMode = "spotlight"; // "spotlight" | "grid"
@@ -11,6 +12,7 @@
   let renderedMainCameraId = null; // avoids reconnecting the main stream on unrelated re-renders
   let renderedGridCameraIds = null; // avoids reconnecting all-camera tiles on unrelated re-renders
   let thumbnailRefreshTimer = null;
+  let listeningCameraId = null; // which camera's audio (if any) is currently playing
 
   const FAVORITE_KEY = "pinvr_favorite_camera_id";
   const SIDE_RAIL_MAX = 4; // thumbnails on the right column before overflowing to the bottom row
@@ -70,6 +72,14 @@
       </div>`;
   }
 
+  function stopListening() {
+    if (listeningCameraId == null) return;
+    spotlightAudio.pause();
+    spotlightAudio.removeAttribute("src");
+    spotlightAudio.load();
+    listeningCameraId = null;
+  }
+
   function renderSpotlight() {
     const featured = cameras.find((c) => c.id === featuredCameraId);
     const others = cameras.filter((c) => c.id !== featuredCameraId);
@@ -79,6 +89,7 @@
       spotlightSide.innerHTML = "";
       spotlightBottom.innerHTML = "";
       renderedMainCameraId = null;
+      stopListening();
       return;
     }
 
@@ -87,6 +98,10 @@
     // on periodic re-renders that don't change what's featured.
     if (renderedMainCameraId !== featured.id) {
       renderedMainCameraId = featured.id;
+      // The Listen button/state belongs to whichever camera was featured
+      // before -- recreating the tile means starting fresh rather than
+      // trying to carry a "was listening" flag onto a different camera.
+      stopListening();
       const favoriteId = getFavoriteId();
       const isFavorite = featured.id === favoriteId;
       spotlightMain.innerHTML = `
@@ -95,6 +110,7 @@
           <div class="tile-label">
             ${featured.name}
             <span style="float:right; display:flex; gap:4px;">
+              <button class="btn" data-listen="${featured.id}" title="Listen to camera audio" style="padding:2px 8px;">🔊</button>
               <button class="btn" data-favorite="${featured.id}" title="${isFavorite ? 'Unset favorite' : 'Set as favorite'}"
                       style="padding:2px 8px; ${isFavorite ? 'color:var(--amber); border-color:var(--amber-dim);' : ''}">${isFavorite ? '★' : '☆'}</button>
               <button class="btn" data-snapshot="${featured.id}" style="padding:2px 8px;">Snap</button>
@@ -156,6 +172,29 @@
 
   // ---- interactions ----
 
+  function toggleListen(camIdRaw) {
+    const camId = parseInt(camIdRaw, 10);
+    const btn = spotlightMain.querySelector(`[data-listen="${camId}"]`);
+    if (listeningCameraId === camId) {
+      stopListening();
+      if (btn) { btn.textContent = "🔊"; btn.title = "Listen to camera audio"; }
+      return;
+    }
+    // Switching which camera we're listening to (or starting fresh) --
+    // tear down any previous stream first. Same single-RTSP-client
+    // concern as live video: don't leave a stale audio connection open
+    // on the camera while starting a new one.
+    spotlightAudio.pause();
+    spotlightAudio.src = `/api/cameras/${camId}/audio?t=${Date.now()}`;
+    spotlightAudio.play().catch((err) => {
+      PiNVR.toast("Could not start audio: " + err.message, true);
+      listeningCameraId = null;
+      if (btn) { btn.textContent = "🔊"; btn.title = "Listen to camera audio"; }
+    });
+    listeningCameraId = camId;
+    if (btn) { btn.textContent = "🔇"; btn.title = "Stop listening"; }
+  }
+
   async function ptzMove(camId, direction) {
     if (direction === "home") {
       try { await PiNVR.api(`/cameras/${camId}/ptz/home`, { method: "POST" }); }
@@ -175,8 +214,13 @@
     const camId = e.target.getAttribute("data-snapshot");
     const favoriteId = e.target.getAttribute("data-favorite");
     const detectId = e.target.getAttribute("data-detect-ptz");
+    const listenId = e.target.getAttribute("data-listen");
     const featureTile = e.target.closest("[data-feature]");
 
+    if (listenId) {
+      toggleListen(listenId);
+      return;
+    }
     if (camId) {
       PiNVR.api(`/playback/snapshot/${camId}`, { method: "POST" })
         .then(() => PiNVR.toast("Snapshot captured"))
@@ -246,6 +290,10 @@
   document.querySelectorAll("[data-view]").forEach((btn) => {
     btn.addEventListener("click", () => {
       viewMode = btn.dataset.view;
+      // Grid view has no Listen control, and switching away from the
+      // spotlight main tile that owns the current audio stream would
+      // otherwise leave it playing invisibly with no way to stop it.
+      stopListening();
       document.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("active", b === btn));
       renderCurrentView();
     });
@@ -270,6 +318,7 @@
     if (event.persisted) {
       renderedMainCameraId = null;
       renderedGridCameraIds = null;
+      stopListening();
       renderCurrentView();
     }
   });

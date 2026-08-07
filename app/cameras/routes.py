@@ -376,6 +376,129 @@ async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(g
     )
 
 
+# --------------------------------------------------------------------------
+# Live audio listen. Same single-RTSP-client hazard as the MJPEG live
+# view above, so this reuses the identical safety pattern (kill old
+# process before starting new, settle delay, retry, disconnect
+# detection) with its own separate process/lock tracking -- audio and
+# video are independent ffmpeg processes, each competing for the same
+# camera connection slot, so they can't share state with the MJPEG path
+# above without risking one killing the other's process by mistake.
+#
+# The camera's audio is PCM A-law over RTSP; browsers can't play that
+# directly in an <audio> tag, so ffmpeg transcodes it to MP3 on the fly
+# and we stream it out as chunked audio/mpeg, which <audio src="..."> can
+# play like an internet radio stream.
+# --------------------------------------------------------------------------
+
+_active_audio_processes: dict[int, "_asyncio.subprocess.Process"] = {}
+_audio_locks: dict[int, "_asyncio.Lock"] = {}
+
+
+def _get_audio_lock(camera_id: int) -> "_asyncio.Lock":
+    lock = _audio_locks.get(camera_id)
+    if lock is None:
+        lock = _asyncio.Lock()
+        _audio_locks[camera_id] = lock
+    return lock
+
+
+async def _spawn_audio_process(camera_id: int, cmd: list, attempts: int = 3, retry_delay: float = 2.0):
+    """Same retry-on-immediate-exit logic as _spawn_mjpeg_process -- see
+    that function's docstring for why this is needed on single-RTSP-client
+    cameras."""
+    last_proc = None
+    for attempt in range(1, attempts + 1):
+        logger.info("Live audio: spawning ffmpeg for camera %s (attempt %d/%d)", camera_id, attempt, attempts)
+        proc = await _asyncio.create_subprocess_exec(
+            *cmd, stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.PIPE
+        )
+        try:
+            await _asyncio.wait_for(proc.wait(), timeout=1.5)
+            stderr = b""
+            if proc.stderr:
+                stderr = await proc.stderr.read()
+            logger.warning(
+                "Live audio: ffmpeg for camera %s exited almost immediately "
+                "(attempt %d/%d, code=%s): %s",
+                camera_id, attempt, attempts, proc.returncode,
+                stderr.decode(errors="replace")[-500:],
+            )
+            last_proc = proc
+            if attempt < attempts:
+                await _asyncio.sleep(retry_delay)
+                continue
+        except _asyncio.TimeoutError:
+            logger.info("Live audio: ffmpeg for camera %s connected successfully (attempt %d/%d)", camera_id, attempt, attempts)
+            return proc
+    logger.error("Live audio: all %d connection attempts failed for camera %s", attempts, camera_id)
+    return last_proc
+
+
+@router.get("/{camera_id}/audio")
+async def audio_stream(camera_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    camera = db.get(Camera, camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    logger.info("Live audio: new request for camera %s", camera_id)
+
+    lock = _get_audio_lock(camera_id)
+    async with lock:
+        old_proc = _active_audio_processes.get(camera_id)
+        if old_proc is not None:
+            logger.info("Live audio: killing previous stream for camera %s (pid=%s)", camera_id, old_proc.pid)
+            await _kill_process(old_proc)
+            await _asyncio.sleep(1.5)
+
+        # Full-resolution stream (not substream) since audio is muxed with
+        # the PTZ/fixed lens's main feed on this hardware; -vn drops video
+        # entirely so ffmpeg doesn't waste Pi 3 CPU decoding frames it'll
+        # never use.
+        rtsp_url = build_authenticated_rtsp_url(camera, substream=False)
+
+        cmd = [
+            "ffmpeg", "-nostdin", "-loglevel", "error",
+            "-rtsp_transport", "tcp", "-i", rtsp_url,
+            "-vn", "-acodec", "libmp3lame", "-b:a", "64k", "-ar", "44100",
+            "-f", "mp3",
+            "pipe:1",
+        ]
+        proc = await _spawn_audio_process(camera_id, cmd)
+        _active_audio_processes[camera_id] = proc
+
+    async def audio_generator():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    chunk = await _asyncio.wait_for(proc.stdout.read(4096), timeout=1.0)
+                except _asyncio.TimeoutError:
+                    continue
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            if proc.returncode is None:
+                proc.terminate()
+                try:
+                    await _asyncio.wait_for(proc.wait(), timeout=3)
+                except _asyncio.TimeoutError:
+                    proc.kill()
+            if _active_audio_processes.get(camera_id) is proc:
+                del _active_audio_processes[camera_id]
+
+    return StreamingResponse(
+        audio_generator(),
+        media_type="audio/mpeg",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
+
+
 def dataclasses_asdict_safe(obj) -> dict:
     import dataclasses
 
