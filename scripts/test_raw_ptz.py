@@ -37,7 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
-async def run(host: str, port: int, username: str, password: str, dry_run: bool) -> int:
+async def run(host: str, port: int, username: str, password: str, dry_run: bool, zoom: bool = False) -> int:
     from app.cameras import onvif_raw
 
     base_url = f"http://{host}:{port}"
@@ -83,13 +83,16 @@ async def run(host: str, port: int, username: str, password: str, dry_run: bool)
         return 0
 
     # Step 4: actual move + stop
-    print("\n[4/4] Sending a brief pan-right nudge, then Stop...")
+    print(f"\n[4/4] Sending a brief {'zoom-in' if zoom else 'pan-right'} nudge, then Stop...")
     try:
-        await onvif_raw.raw_move(host, port, username, password, pan=0.3, tilt=0.0, zoom=0.0)
-        print("      ContinuousMove accepted. Waiting 1s...")
-        await asyncio.sleep(1.0)
+        if zoom:
+            await onvif_raw.raw_move(host, port, username, password, pan=0.0, tilt=0.0, zoom=0.5)
+        else:
+            await onvif_raw.raw_move(host, port, username, password, pan=0.3, tilt=0.0, zoom=0.0)
+        print("      ContinuousMove accepted (no SOAP fault). Waiting 1.5s...")
+        await asyncio.sleep(1.5)
         await onvif_raw.raw_stop(host, port, username, password)
-        print("      Stop accepted.")
+        print("      Stop accepted (or zero-velocity fallback succeeded).")
     except onvif_raw.RawPTZError as exc:
         print(f"      FAILED: {exc}")
         print("\nPath resolution worked but the actual move/stop command was")
@@ -97,10 +100,17 @@ async def run(host: str, port: int, username: str, password: str, dry_run: bool)
         print("see whether it moved despite the SOAP fault, or didn't move at all.")
         return 1
 
-    print("\nAll steps passed. Did the camera actually move? If yes, the raw")
-    print("SOAP fallback is confirmed working end-to-end on this hardware.")
-    print("If the requests succeeded but the camera didn't move, the SOAP")
-    print("envelope shape may need adjusting for this firmware's quirks.")
+    print("\nAll steps passed (the camera accepted the command with no SOAP")
+    print("fault). Did the camera actually move/zoom?")
+    print("  - If yes: confirmed working end-to-end on this hardware.")
+    if zoom:
+        print("  - If the command was accepted but nothing physically zoomed:")
+        print("    this usually means the camera's PTZ profile has no zoom")
+        print("    actuator/range configured -- i.e. a hardware/firmware")
+        print("    limit, not something fixable from the ONVIF side. Check")
+        print("    whether the camera's own app offers a physical zoom")
+        print("    control (not just pinch-to-zoom digital crop in its live")
+        print("    view, which isn't real camera movement) to confirm.")
     return 0
 
 
@@ -111,9 +121,10 @@ def main() -> int:
     parser.add_argument("--username", required=True)
     parser.add_argument("--password", required=True)
     parser.add_argument("--dry-run", action="store_true", help="Resolve paths/profile only, don't move the camera")
+    parser.add_argument("--zoom", action="store_true", help="Test a zoom-in nudge instead of pan-right (step 4 only)")
     args = parser.parse_args()
 
-    return asyncio.run(run(args.host, args.port, args.username, args.password, args.dry_run))
+    return asyncio.run(run(args.host, args.port, args.username, args.password, args.dry_run, zoom=args.zoom))
 
 
 if __name__ == "__main__":

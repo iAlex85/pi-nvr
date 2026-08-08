@@ -7,6 +7,13 @@
   <button class="btn" data-view="spotlight">Spotlight</button>
   <button class="btn" data-view="grid">All cameras</button>
   <div style="flex:1;"></div>
+  <label for="qualitySelect" style="font-size:0.85em; color:var(--text-dim);">Quality</label>
+  <select id="qualitySelect" class="btn" style="padding:4px 8px;">
+    <option value="low">Low (480p, fast)</option>
+    <option value="medium">Medium (640p)</option>
+    <option value="high">High (960p, more CPU)</option>
+    <option value="max">Max (1280p, slower)</option>
+  </select>
   <button class="btn" id="fullscreenBtn">Fullscreen</button>
 </div>
 

@@ -5,7 +5,31 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Live view quality selector**: a Quality dropdown (Low 480p / Medium
+  640p / High 960p / Max 1280p) on the Live view toolbar controls the
+  MJPEG stream's `-vf scale` width and frame rate via new `width`/`fps`
+  query params on `GET /cameras/{id}/mjpeg`. Choice persists in
+  `localStorage` and applies to both the Spotlight main tile and the
+  All-cameras grid. No single default is right here -- the Pi 3 has no
+  hardware decode for this camera's HEVC substream, so ffmpeg is doing a
+  real CPU transcode regardless, and higher width/fps both cost
+  responsiveness on hardware this constrained.
+- **`scripts/test_raw_ptz.py --zoom`**: tests a zoom-in nudge in step 4
+  instead of pan-right, to help tell apart "zoom command rejected" (would
+  now show a Fault, see below) from "zoom accepted but this camera has no
+  physical/ONVIF-exposed zoom actuator" (hardware/firmware limit, not
+  fixable from this side).
+
 ### Fixed
+- **PTZ joystick felt delayed**: every move/stop/home command was
+  re-running full ONVIF path discovery from scratch -- several sequential
+  HTTP round-trips probing candidate media/PTZ paths -- before sending the
+  actual command, on every single button press. `onvif_raw.py` now caches
+  the resolved (profile token, PTZ service URL) per camera after the
+  first successful discovery, so later presses skip straight to the real
+  command. The cache is invalidated and discovery retried once,
+  automatically, if a cached path stops answering (e.g. camera rebooted).
 - **PTZ "keeps rotating until Home is pressed"**: the raw SOAP fallback
   treated any parseable XML response as success, including SOAP Faults
   -- a logically-failed request (camera saying "no") looks identical to
@@ -26,6 +50,15 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   of just looking like nothing happened.
 
 ### Changed
+- **Audio listen errors are now diagnosable from the browser**: `<audio
+  src="...">` never exposes a failed response's body to JavaScript, so
+  every audio failure was showing the browser's generic, useless
+  `AbortError: the operation was aborted` no matter what the backend's
+  503 detail actually said. The Listen button now does a quick `fetch()`
+  first to read the real error detail (which ffmpeg failure, or the
+  connection-limit hint) before handing the stream to `<audio>`. Costs a
+  bit of extra connect/teardown latency on start, worth it to stop
+  guessing blind about a repeatedly-reported failure.
 - **PTZ detection now reports why, not just whether**: `POST
   /cameras/{id}/ptz/detect` and `ptz.get_capabilities()` used to return a
   flat `supports_ptz: bool`, so a genuinely-unsupported camera, a camera

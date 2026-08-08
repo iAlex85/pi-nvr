@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -293,12 +293,19 @@ async def _spawn_mjpeg_process(camera_id: int, cmd: list, attempts: int = 3, ret
 
 
 @router.get("/{camera_id}/mjpeg")
-async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+async def mjpeg_stream(
+    camera_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    width: int = Query(640, ge=320, le=1280, description="Output frame width in px, height scales to match"),
+    fps: int = Query(8, ge=2, le=15, description="Output frame rate"),
+):
     camera = db.get(Camera, camera_id)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
 
-    logger.info("Live view: new request for camera %s", camera_id)
+    logger.info("Live view: new request for camera %s (width=%s fps=%s)", camera_id, width, fps)
 
     lock = _get_mjpeg_lock(camera_id)
     async with lock:
@@ -313,11 +320,19 @@ async def mjpeg_stream(camera_id: int, request: Request, db: Session = Depends(g
 
         rtsp_url = build_authenticated_rtsp_url(camera, substream=True)
 
+        # width/fps are user-adjustable (Live view quality selector) since
+        # the right trade-off depends on hardware -- the Pi 3 has no
+        # hardware decode for this camera's HEVC substream, so higher
+        # width/fps both cost real CPU on top of ffmpeg's own transcode
+        # work. Higher values can visibly worsen the live-view responsiveness
+        # this project already had to fight hard for (see the tab-switch/
+        # bfcache fixes in CHANGELOG); there's no "just always higher"
+        # answer here, hence exposing it instead of hardcoding a guess.
         cmd = [
             "ffmpeg", "-nostdin", "-loglevel", "error",
             "-rtsp_transport", "tcp", "-i", rtsp_url,
-            "-f", "mjpeg", "-q:v", "6", "-r", "8",
-            "-vf", "scale=640:-2",
+            "-f", "mjpeg", "-q:v", "6", "-r", str(fps),
+            "-vf", f"scale={width}:-2",
             "pipe:1",
         ]
         proc = await _spawn_mjpeg_process(camera_id, cmd)

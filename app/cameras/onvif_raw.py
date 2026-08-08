@@ -230,15 +230,51 @@ async def _resolve_ptz_url(client: httpx.AsyncClient, base_url: str, username: s
     return ptz_url
 
 
-async def raw_move(host: str, port: int, username: str, password: str, pan: float, tilt: float, zoom: float) -> None:
+# Every call was re-running full path discovery (probing each candidate
+# media path, then each candidate PTZ path, each a separate HTTP
+# round-trip) from scratch -- on every single button press. That's the
+# actual source of the joystick's felt-delay: several sequential network
+# requests happening before the real move/stop command even goes out.
+# The resolved (profile_token, ptz_url) pair for a given camera doesn't
+# change between presses, so cache it and only re-discover if a cached
+# entry stops working (connection failure, not a logical Fault -- a
+# Fault means the path was right and the *command* was refused, which
+# re-discovery can't fix anyway).
+_resolved_cache: dict[tuple[str, int], tuple[str, str]] = {}
+
+
+def _invalidate_cache(host: str, port: int) -> None:
+    _resolved_cache.pop((host, port), None)
+
+
+async def _get_resolved(host: str, port: int, username: str, password: str) -> tuple[str, str]:
+    key = (host, port)
+    cached = _resolved_cache.get(key)
+    if cached:
+        return cached
     base_url = f"http://{host}:{port}"
+    profile_token = await get_profile_token(host, port, username, password)
     async with httpx.AsyncClient() as client:
-        profile_token = await get_profile_token(host, port, username, password)
         ptz_url = await _resolve_ptz_url(client, base_url, username, password, profile_token)
+    _resolved_cache[key] = (profile_token, ptz_url)
+    return profile_token, ptz_url
+
+
+async def raw_move(host: str, port: int, username: str, password: str, pan: float, tilt: float, zoom: float) -> None:
+    profile_token, ptz_url = await _get_resolved(host, port, username, password)
+    async with httpx.AsyncClient() as client:
         envelope = _envelope(_continuous_move_body(profile_token, pan, tilt, zoom), username, password)
         root = await _post_soap(client, ptz_url, envelope)
         if root is None:
-            raise RawPTZError("ContinuousMove request failed")
+            # Cached path stopped answering at all -- likely stale (camera
+            # rebooted, IP/firmware changed). Drop the cache and retry
+            # discovery once before giving up.
+            _invalidate_cache(host, port)
+            profile_token, ptz_url = await _get_resolved(host, port, username, password)
+            envelope = _envelope(_continuous_move_body(profile_token, pan, tilt, zoom), username, password)
+            root = await _post_soap(client, ptz_url, envelope)
+            if root is None:
+                raise RawPTZError("ContinuousMove request failed")
         fault = _extract_fault_reason(root)
         if fault:
             raise RawPTZError(f"Camera rejected ContinuousMove: {fault}")
@@ -246,13 +282,18 @@ async def raw_move(host: str, port: int, username: str, password: str, pan: floa
 
 
 async def raw_stop(host: str, port: int, username: str, password: str) -> None:
-    base_url = f"http://{host}:{port}"
+    profile_token, ptz_url = await _get_resolved(host, port, username, password)
     async with httpx.AsyncClient() as client:
-        profile_token = await get_profile_token(host, port, username, password)
-        ptz_url = await _resolve_ptz_url(client, base_url, username, password, profile_token)
         envelope = _envelope(_stop_body(profile_token), username, password)
         root = await _post_soap(client, ptz_url, envelope)
         fault = _extract_fault_reason(root) if root is not None else "no response"
+
+        if root is None:
+            _invalidate_cache(host, port)
+            profile_token, ptz_url = await _get_resolved(host, port, username, password)
+            envelope = _envelope(_stop_body(profile_token), username, password)
+            root = await _post_soap(client, ptz_url, envelope)
+            fault = _extract_fault_reason(root) if root is not None else "no response"
 
         if root is None or fault:
             # Known cheap-firmware quirk: Stop is rejected/ignored while
@@ -275,14 +316,17 @@ async def raw_stop(host: str, port: int, username: str, password: str) -> None:
 
 
 async def raw_go_home(host: str, port: int, username: str, password: str) -> None:
-    base_url = f"http://{host}:{port}"
+    profile_token, ptz_url = await _get_resolved(host, port, username, password)
     async with httpx.AsyncClient() as client:
-        profile_token = await get_profile_token(host, port, username, password)
-        ptz_url = await _resolve_ptz_url(client, base_url, username, password, profile_token)
         envelope = _envelope(_goto_home_body(profile_token), username, password)
         root = await _post_soap(client, ptz_url, envelope)
         if root is None:
-            raise RawPTZError("GotoHomePosition request failed")
+            _invalidate_cache(host, port)
+            profile_token, ptz_url = await _get_resolved(host, port, username, password)
+            envelope = _envelope(_goto_home_body(profile_token), username, password)
+            root = await _post_soap(client, ptz_url, envelope)
+            if root is None:
+                raise RawPTZError("GotoHomePosition request failed")
         fault = _extract_fault_reason(root)
         if fault:
             raise RawPTZError(f"Camera rejected GotoHomePosition: {fault}")
@@ -291,12 +335,12 @@ async def raw_go_home(host: str, port: int, username: str, password: str) -> Non
 async def raw_detect(host: str, port: int, username: str, password: str) -> bool:
     """Best-effort probe used by the camera form's 'Test PTZ' action --
     returns True if we could resolve a profile token and a PTZ service
-    path at all, without actually moving the camera."""
+    path at all, without actually moving the camera. Uses the same
+    cache as move/stop/home, so a successful "Check for PTZ" also warms
+    the cache and the first real move afterwards doesn't pay the
+    discovery cost again."""
     try:
-        base_url = f"http://{host}:{port}"
-        async with httpx.AsyncClient() as client:
-            profile_token = await get_profile_token(host, port, username, password)
-            await _resolve_ptz_url(client, base_url, username, password, profile_token)
+        await _get_resolved(host, port, username, password)
         return True
     except RawPTZError:
         return False

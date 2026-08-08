@@ -15,7 +15,33 @@
   let listeningCameraId = null; // which camera's audio (if any) is currently playing
 
   const FAVORITE_KEY = "pinvr_favorite_camera_id";
+  const QUALITY_KEY = "pinvr_live_quality";
   const SIDE_RAIL_MAX = 4; // thumbnails on the right column before overflowing to the bottom row
+
+  // width/fps pairs. The Pi 3 has no hardware decode for this camera's
+  // HEVC substream, so ffmpeg is transcoding on the CPU either way --
+  // higher settings cost real responsiveness, hence a user-facing choice
+  // rather than one hardcoded guess.
+  const QUALITY_PRESETS = {
+    low: { width: 480, fps: 8, label: "Low (480p, fast)" },
+    medium: { width: 640, fps: 8, label: "Medium (640p)" },
+    high: { width: 960, fps: 8, label: "High (960p, more CPU)" },
+    max: { width: 1280, fps: 6, label: "Max (1280p, slower)" },
+  };
+
+  function getQuality() {
+    const raw = localStorage.getItem(QUALITY_KEY);
+    return QUALITY_PRESETS[raw] ? raw : "medium";
+  }
+
+  function setQuality(key) {
+    localStorage.setItem(QUALITY_KEY, key);
+  }
+
+  function mjpegSrc(camId) {
+    const { width, fps } = QUALITY_PRESETS[getQuality()];
+    return `/api/cameras/${camId}/mjpeg?t=${Date.now()}&width=${width}&fps=${fps}`;
+  }
 
   function getFavoriteId() {
     const raw = localStorage.getItem(FAVORITE_KEY);
@@ -106,7 +132,7 @@
       const isFavorite = featured.id === favoriteId;
       spotlightMain.innerHTML = `
         <div class="camera-tile spotlight-main-tile">
-          <img src="/api/cameras/${featured.id}/mjpeg?t=${Date.now()}" alt="${featured.name}" />
+          <img src="${mjpegSrc(featured.id)}" alt="${featured.name}" />
           <div class="tile-label">
             ${featured.name}
             <span style="float:right; display:flex; gap:4px;">
@@ -145,7 +171,7 @@
       const isFavorite = cam.id === favoriteId;
       return `
         <div class="camera-tile" data-feature="${cam.id}">
-          <img src="/api/cameras/${cam.id}/mjpeg?t=${Date.now()}" alt="${cam.name}" />
+          <img src="${mjpegSrc(cam.id)}" alt="${cam.name}" />
           <div class="tile-label">
             ${cam.name}
             <span style="float:right; display:flex; gap:4px;">
@@ -191,7 +217,7 @@
     listeningCameraId = null;
   });
 
-  function toggleListen(camIdRaw) {
+  async function toggleListen(camIdRaw) {
     const camId = parseInt(camIdRaw, 10);
     const btn = spotlightMain.querySelector(`[data-listen="${camId}"]`);
     if (listeningCameraId === camId) {
@@ -199,24 +225,46 @@
       if (btn) { btn.textContent = "🔊"; btn.title = "Listen to camera audio"; }
       return;
     }
-    // Switching which camera we're listening to (or starting fresh) --
-    // tear down any previous stream first. Same single-RTSP-client
-    // concern as live video: don't leave a stale audio connection open
-    // on the camera while starting a new one.
+
     spotlightAudio.pause();
-    spotlightAudio.src = `/api/cameras/${camId}/audio?t=${Date.now()}`;
-    spotlightAudio.play().catch((err) => {
-      PiNVR.toast(
-        "Could not start audio: " + err.message + ". If Live view video " +
-        "for this camera is open at the same time, this hardware may " +
-        "only allow one connection at a time.",
-        true
-      );
+    if (btn) { btn.disabled = true; btn.textContent = "…"; }
+
+    const url = `/api/cameras/${camId}/audio?t=${Date.now()}`;
+    try {
+      // <audio src="..."> never exposes a failed response's body to JS --
+      // every past failure here just showed the browser's generic
+      // "AbortError" no matter what the backend actually said. Fetching
+      // first lets us read the real 503 detail (e.g. which ffmpeg error,
+      // or the connection-limit hint) before handing the stream to
+      // <audio>. This does mean starting audio takes a bit longer (an
+      // extra connect/teardown cycle against the camera) -- worth it to
+      // stop guessing blind.
+      const resp = await fetch(url, { credentials: "same-origin" });
+      if (!resp.ok) {
+        let detail = `HTTP ${resp.status}`;
+        try {
+          const body = await resp.json();
+          if (body.detail) detail = body.detail;
+        } catch (e) { /* non-JSON error body, keep the HTTP status */ }
+        throw new Error(detail);
+      }
+      // Only needed this to confirm the stream actually starts --
+      // release the probe connection so we're not holding two
+      // connections to the same camera-audio process, then let <audio>
+      // open its own real stream.
+      if (resp.body && resp.body.cancel) resp.body.cancel();
+
+      spotlightAudio.src = url;
+      await spotlightAudio.play();
+      listeningCameraId = camId;
+      if (btn) { btn.textContent = "🔇"; btn.title = "Stop listening"; }
+    } catch (err) {
+      PiNVR.toast("Could not start audio: " + err.message, true);
       listeningCameraId = null;
       if (btn) { btn.textContent = "🔊"; btn.title = "Listen to camera audio"; }
-    });
-    listeningCameraId = camId;
-    if (btn) { btn.textContent = "🔇"; btn.title = "Stop listening"; }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   async function ptzMove(camId, direction) {
@@ -333,6 +381,19 @@
     });
   });
   document.querySelector('[data-view="spotlight"]').classList.add("active");
+
+  const qualitySelect = document.getElementById("qualitySelect");
+  qualitySelect.value = getQuality();
+  qualitySelect.addEventListener("change", () => {
+    setQuality(qualitySelect.value);
+    // Force every visible tile to reconnect with the new width/fps --
+    // the same "only reconnect what changed" guard that avoids
+    // unnecessary reconnects on unrelated re-renders would otherwise
+    // also skip the reconnect this change actually needs.
+    renderedMainCameraId = null;
+    renderedGridCameraIds = null;
+    renderCurrentView();
+  });
 
   document.getElementById("fullscreenBtn").addEventListener("click", () => {
     const target = viewMode === "spotlight" ? spotlightLayout : gridLayout;
