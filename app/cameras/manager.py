@@ -36,6 +36,25 @@ from app.models import Camera
 
 logger = logging.getLogger("pi_nvr.cameras")
 
+# Lazily/defensively imported: routes.py defines is_camera_actively_streamed
+# (checks the live-view MJPEG and audio-listen process registries). Deferred
+# to avoid any import-order fragility between these two modules, and
+# defaults to "nothing is streaming" if it's ever unavailable (e.g. in a
+# test harness that imports this module standalone) rather than failing --
+# worst case that just falls back to the old always-probe behavior.
+_active_stream_checker = None
+
+
+def _get_active_stream_checker():
+    global _active_stream_checker
+    if _active_stream_checker is None:
+        try:
+            from app.cameras.routes import is_camera_actively_streamed
+            _active_stream_checker = is_camera_actively_streamed
+        except ImportError:
+            _active_stream_checker = lambda camera_id: False
+    return _active_stream_checker
+
 # Default probe interval. Kept fairly quick now that the recording-skip
 # optimization below (see _probe_once) already prevents the specific
 # contention scenario that motivated a much slower default previously --
@@ -133,6 +152,21 @@ class CameraManager:
             # Already have conclusive proof of connectivity from an active
             # recording connection -- skip the redundant probe rather than
             # risk contending for a single-RTSP-client camera's one slot.
+            status = self._status.setdefault(camera_id, CameraStatus(camera_id=camera_id))
+            status.online = True
+            status.last_seen = time.time()
+            status.last_error = None
+            status.consecutive_failures = 0
+            return
+
+        if _get_active_stream_checker()(camera_id):
+            # Same reasoning as the recording check above, extended to
+            # Live view/Dashboard MJPEG tiles and audio listen: since the
+            # Dashboard now keeps a persistent live connection open per
+            # camera (not just Live view), this guard matters a lot more
+            # than it used to -- without it, this probe firing every
+            # ~20s would periodically knock loose whatever's actually
+            # being watched on single-RTSP-client hardware.
             status = self._status.setdefault(camera_id, CameraStatus(camera_id=camera_id))
             status.online = True
             status.last_seen = time.time()

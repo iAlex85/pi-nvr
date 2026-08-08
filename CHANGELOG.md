@@ -6,6 +6,20 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Dashboard camera tiles are now live**, matching Live view's "All
+  cameras" grid, instead of a static snapshot that only ever updated if
+  someone manually hit "Snap" (or once, automatically, the first time a
+  camera was added) -- there was no periodic re-capture happening
+  anywhere, so the image really could be arbitrarily old. Tiles stream
+  real MJPEG at a fixed, conservative 480p/6fps (independent of the Live
+  view Quality preference) since the Dashboard can be showing every
+  camera at once and this Pi has no hardware decode for these feeds --
+  the cost of N simultaneous high-res transcodes is a very different
+  question from one Live view tile's cost.
+- **Click a Dashboard camera tile to open it in Live view**: tiles are
+  now links to `/live?camera={id}`; Live view honors that query param
+  (taking priority over the favorite camera) to feature that camera on
+  load.
 - **Live view quality selector**: a Quality dropdown (Low 480p / Medium
   640p / High 960p / Max 1280p) on the Live view toolbar controls the
   MJPEG stream's `-vf scale` width and frame rate via new `width`/`fps`
@@ -20,6 +34,24 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   now show a Fault, see below) from "zoom accepted but this camera has no
   physical/ONVIF-exposed zoom actuator" (hardware/firmware limit, not
   fixable from this side).
+
+### Changed
+- **Dashboard's 15s auto-refresh no longer rebuilds the camera grid**:
+  previously the whole grid (all `<img>` elements) was torn down and
+  recreated every 15 seconds just to refresh the stat cards, which --
+  now that tiles hold live streams instead of static images -- would
+  have forced every camera to reconnect every 15 seconds for no reason.
+  Stats and online/offline badges still refresh on that cadence; the
+  camera grid itself only rebuilds when the camera list might have
+  changed (every 2 minutes, or you can reload the page).
+- **Health-check probe now also skips cameras with an active live-view
+  or audio-listen connection**, the same way it already skips ones with
+  an active recording -- previously only recording counted, so this
+  probe firing every ~20s could periodically knock loose whatever was
+  actually being watched on single-RTSP-client hardware. This matters
+  more now that the Dashboard keeps a persistent live connection open
+  per camera (not just Live view), so exposure to this problem went up
+  significantly with the change above.
 
 ### Fixed
 - **PTZ joystick felt delayed**: every move/stop/home command was

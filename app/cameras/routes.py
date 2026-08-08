@@ -538,6 +538,23 @@ async def audio_stream(camera_id: int, request: Request, db: Session = Depends(g
     )
 
 
+def is_camera_actively_streamed(camera_id: int) -> bool:
+    """True if a live-view MJPEG tile or an audio listen stream currently
+    holds a connection to this camera. Used by CameraManager's health
+    probe to skip its own periodic reconnect attempt -- on single-RTSP-
+    client hardware, that probe firing while something is actually being
+    watched (Live view, or now the Dashboard's always-on live tiles) can
+    knock the real connection loose for no reason. A process existing in
+    the registry but already exited (returncode set) doesn't count."""
+    mjpeg_proc = _active_mjpeg_processes.get(camera_id)
+    if mjpeg_proc is not None and mjpeg_proc.returncode is None:
+        return True
+    audio_proc = _active_audio_processes.get(camera_id)
+    if audio_proc is not None and audio_proc.returncode is None:
+        return True
+    return False
+
+
 def dataclasses_asdict_safe(obj) -> dict:
     import dataclasses
 

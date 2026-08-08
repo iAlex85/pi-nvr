@@ -53,6 +53,11 @@
     else localStorage.setItem(FAVORITE_KEY, String(id));
   }
 
+  function getRequestedCameraId() {
+    const raw = new URLSearchParams(window.location.search).get("camera");
+    return raw ? parseInt(raw, 10) : null;
+  }
+
   async function loadCameras() {
     try {
       cameras = await PiNVR.api("/cameras");
@@ -61,10 +66,18 @@
       cameras = [];
     }
     if (featuredCameraId == null || !cameras.some((c) => c.id === featuredCameraId)) {
+      // A camera passed via ?camera=<id> (e.g. clicked from the Dashboard)
+      // takes priority over the favorite -- someone clicking a specific
+      // camera clearly wants to see *that* one, not whichever is starred.
+      const requestedId = getRequestedCameraId();
       const favoriteId = getFavoriteId();
-      featuredCameraId = (favoriteId != null && cameras.some((c) => c.id === favoriteId))
-        ? favoriteId
-        : (cameras[0] ? cameras[0].id : null);
+      if (requestedId != null && cameras.some((c) => c.id === requestedId)) {
+        featuredCameraId = requestedId;
+      } else {
+        featuredCameraId = (favoriteId != null && cameras.some((c) => c.id === favoriteId))
+          ? favoriteId
+          : (cameras[0] ? cameras[0].id : null);
+      }
     }
     renderCurrentView();
   }

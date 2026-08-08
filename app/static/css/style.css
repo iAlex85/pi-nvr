@@ -325,6 +325,7 @@ tr:hover td { background: var(--panel-raised); }
 
 .camera-tile { background: #000; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; position: relative; transition: border-color 0.15s ease; }
 .camera-tile:hover { border-color: var(--text-faint); }
+a.camera-tile { display: block; text-decoration: none; color: inherit; cursor: pointer; }
 .camera-tile img, .camera-tile video { width: 100%; display: block; aspect-ratio: 16/9; object-fit: cover; background: #000; }
 .camera-tile .tile-label {
   position: absolute; bottom: 0; left: 0; right: 0;
