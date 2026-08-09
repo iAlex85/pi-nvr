@@ -29,14 +29,17 @@
     return `${days}d ${hours}h`;
   }
 
-  // Dashboard tiles show a real live MJPEG stream per camera, same as
-  // Live view's "All cameras" grid -- kept at a fixed, conservative
-  // width/fps here (not the user's Live-view Quality preference) since
-  // the Dashboard can be showing every camera at once, and this Pi has
-  // no hardware decode for these streams: N simultaneous high-res
-  // transcodes would cost far more than one Live view tile does.
-  const DASHBOARD_STREAM_WIDTH = 480;
-  const DASHBOARD_STREAM_FPS = 6;
+  // Dashboard tiles show the latest periodically-captured snapshot (see
+  // CameraManager._snapshot_loop, app/cameras/manager.py) rather than a
+  // live MJPEG stream. Live streams were tried here first but caused
+  // real problems: this camera hardware only tolerates one RTSP
+  // connection at a time, and Dashboard opening a persistent connection
+  // per camera collided with Live view and with itself (multiple
+  // cameras connecting simultaneously on page load). Snapshots avoid
+  // holding any connection open at all -- the backend now actually
+  // refreshes them on a timer (previously nothing did, so the old
+  // static-image version could show an arbitrarily stale frame).
+  const SNAPSHOT_REFRESH_MS = 20000;
 
   async function loadStats() {
     try {
@@ -49,14 +52,13 @@
       document.getElementById("statUptime").textContent = fmtUptime(stats.system.uptime_seconds);
     } catch (e) { PiNVR.toast(e.message, true); }
 
-    // Update just the online/offline badges on existing tiles -- rebuilding
-    // the whole grid (and thus every <img>) on this same 15s interval would
-    // force every camera's live stream to reconnect every 15 seconds for
-    // no reason, fighting itself on hardware that already only tolerates
-    // one RTSP connection per camera.
+    // Update badges and re-point each tile's <img> at a fresh cache-busted
+    // URL -- this doesn't open a new connection (it's a plain JPEG file
+    // fetch, not a stream), just picks up whatever the backend's periodic
+    // capture has written most recently.
     try {
       const statusMap = await PiNVR.api("/cameras/status/all");
-      document.querySelectorAll("#dashCameraGrid [data-camera-id]").forEach((tile) => {
+      document.querySelectorAll("#dashCameraGrid a[data-camera-id]").forEach((tile) => {
         const camId = parseInt(tile.getAttribute("data-camera-id"), 10);
         const s = statusMap[camId] || {};
         const badge = tile.querySelector(".badge");
@@ -68,7 +70,29 @@
     } catch (e) { /* stat cards already reported this failure */ }
   }
 
-  let gridBuilt = false;
+  function refreshSnapshots() {
+    document.querySelectorAll("#dashCameraGrid img[data-camera-id]").forEach((img) => {
+      const camId = img.getAttribute("data-camera-id");
+      img.src = `/api/playback/snapshot/${camId}/latest?t=${Date.now()}`;
+    });
+  }
+
+  // A camera with no snapshot yet (e.g. just added, before its first
+  // periodic capture completes) 404s on "latest" -- rather than leaving
+  // the tile permanently dim, request one capture now and retry once. If
+  // the camera is genuinely offline this will also fail and the tile
+  // stays dim, which is the correct outcome.
+  const snapshotRetried = new Set();
+  async function handleMissingSnapshot(camId, imgEl) {
+    imgEl.style.opacity = 0.15;
+    if (snapshotRetried.has(camId)) return; // avoid retry loops
+    snapshotRetried.add(camId);
+    try {
+      await PiNVR.api(`/playback/snapshot/${camId}`, { method: "POST" });
+      imgEl.src = `/api/playback/snapshot/${camId}/latest?t=${Date.now()}`;
+      imgEl.style.opacity = 1;
+    } catch (e) { /* camera likely offline -- leave dim, nothing more to do */ }
+  }
 
   async function buildCameraGrid() {
     try {
@@ -86,26 +110,25 @@
         tile.title = `Open ${cam.name} in Live view`;
         tile.setAttribute("data-camera-id", cam.id);
         tile.innerHTML = `
-          <img src="/api/cameras/${cam.id}/mjpeg?width=${DASHBOARD_STREAM_WIDTH}&fps=${DASHBOARD_STREAM_FPS}"
-               alt="${cam.name}" loading="lazy" />
+          <img src="/api/playback/snapshot/${cam.id}/latest" alt="${cam.name}" loading="lazy"
+               data-camera-id="${cam.id}"
+               onerror="handleMissingSnapshot(${cam.id}, this)" />
           <div class="tile-label">
             ${cam.name}
             <span class="badge ${s.online ? "badge-online" : "badge-offline"}">${s.online ? "ONLINE" : "OFFLINE"}</span>
           </div>`;
         grid.appendChild(tile);
       });
-      gridBuilt = true;
     } catch (e) { PiNVR.toast(e.message, true); }
   }
 
   loadStats();
   buildCameraGrid();
   setInterval(loadStats, 15000);
+  setInterval(refreshSnapshots, SNAPSHOT_REFRESH_MS);
 
   // Cameras page can add/remove cameras in another tab -- catch that on
-  // a much slower cadence than the stats refresh, since this is the one
-  // case the grid legitimately does need rebuilding (and reconnecting
-  // every stream), not just a badge update.
+  // a slower cadence than the snapshot refresh.
   setInterval(buildCameraGrid, 120000);
 </script>
 {% endblock %}

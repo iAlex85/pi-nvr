@@ -65,6 +65,16 @@ def _get_active_stream_checker():
 DEFAULT_PROBE_INTERVAL_SECONDS = 20
 PROBE_TIMEOUT_SECONDS = 8
 
+# Default cycle time for periodic Dashboard-snapshot capture. Cameras are
+# captured one at a time with a stagger gap between them (see
+# _snapshot_loop) rather than all at once -- firing simultaneous capture
+# connections at every camera was exactly what broke Dashboard's brief
+# live-streaming design on single-RTSP-client hardware, and periodic
+# snapshot capture must not repeat that mistake. Override via
+# cameras.snapshot_interval_seconds.
+DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 90
+SNAPSHOT_STAGGER_SECONDS = 5
+
 
 @dataclasses.dataclass
 class CameraStatus:
@@ -88,6 +98,8 @@ class CameraManager:
         # CameraManager must still work (e.g. in tests) without them wired up.
         self._recording_engine = None
         self._notifications = None
+        self._storage = None
+        self._snapshot_task: asyncio.Task | None = None
 
     def set_recording_engine(self, recording_engine) -> None:
         self._recording_engine = recording_engine
@@ -95,9 +107,16 @@ class CameraManager:
     def set_notifications(self, notifications) -> None:
         self._notifications = notifications
 
+    def set_storage(self, storage) -> None:
+        self._storage = storage
+
     @property
     def _probe_interval(self) -> float:
         return self.cfg.get("cameras.probe_interval_seconds", DEFAULT_PROBE_INTERVAL_SECONDS)
+
+    @property
+    def _snapshot_interval(self) -> float:
+        return self.cfg.get("cameras.snapshot_interval_seconds", DEFAULT_SNAPSHOT_INTERVAL_SECONDS)
 
     async def start(self) -> None:
         self._running = True
@@ -106,12 +125,17 @@ class CameraManager:
             camera_ids = [c.id for c in cameras]
         for cam_id in camera_ids:
             self._spawn_probe_task(cam_id)
+        if self._storage is not None:
+            self._snapshot_task = asyncio.create_task(self._snapshot_loop())
         logger.info("CameraManager started, watching %d camera(s)", len(camera_ids))
 
     async def stop(self) -> None:
         self._running = False
         for task in self._tasks.values():
             task.cancel()
+        if self._snapshot_task is not None:
+            self._snapshot_task.cancel()
+            await asyncio.gather(self._snapshot_task, return_exceptions=True)
         await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         self._tasks.clear()
 
@@ -227,6 +251,51 @@ class CameraManager:
                 status.fps = _parse_frame_rate(line.split("=", 1)[1])
             elif line.startswith("bit_rate=") and line.split("=", 1)[1].isdigit():
                 status.bitrate_kbps = int(line.split("=", 1)[1]) / 1000
+
+    async def _snapshot_loop(self) -> None:
+        while self._running:
+            camera_ids = list(self._tasks.keys())
+            for camera_id in camera_ids:
+                if not self._running:
+                    break
+                await self._maybe_capture_snapshot(camera_id)
+                # Stagger captures across cameras -- firing a connection
+                # attempt at every camera simultaneously is exactly what
+                # broke Dashboard's brief live-streaming design on this
+                # single-RTSP-client hardware, and periodic snapshot
+                # capture must not repeat that mistake.
+                await asyncio.sleep(SNAPSHOT_STAGGER_SECONDS)
+            # Spend the rest of the cycle idle. If staggering already used
+            # up more than the configured interval (many cameras, short
+            # interval), still take a minimum breather before looping.
+            remaining = self._snapshot_interval - (SNAPSHOT_STAGGER_SECONDS * len(camera_ids))
+            await asyncio.sleep(max(remaining, SNAPSHOT_STAGGER_SECONDS))
+
+    async def _maybe_capture_snapshot(self, camera_id: int) -> None:
+        if self._storage is None:
+            return
+        if self._recording_engine is not None and self._recording_engine.is_recording(camera_id):
+            return  # don't compete with an active recording connection
+        if _get_active_stream_checker()(camera_id):
+            return  # don't compete with an active Live view / audio connection
+
+        with session_scope() as db:
+            camera = db.get(Camera, camera_id)
+            if camera is None or not camera.enabled:
+                return
+            # Extract everything needed as plain values while `camera` is
+            # still attached -- see app/cameras/snapshot.py's docstring for
+            # why the actual capture call can't take the ORM object itself.
+            rtsp_url = build_authenticated_rtsp_url(camera)
+            snapshot_dir = self._storage.snapshot_dir_for_camera(camera)
+
+        from app.cameras import snapshot as snapshot_capture
+        try:
+            await snapshot_capture.capture_snapshot(rtsp_url, snapshot_dir, camera_id)
+        except snapshot_capture.SnapshotError as exc:
+            # Routine for an offline camera -- don't escalate to a warning,
+            # the probe loop already reports online/offline status.
+            logger.debug("Periodic snapshot skipped for camera %s: %s", camera_id, exc)
 
     def _mark_offline(self, status: CameraStatus, error: str, camera_name: str = "") -> None:
         was_online = status.online

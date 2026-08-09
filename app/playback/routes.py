@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user, require_admin
 from app.cameras.url_utils import build_authenticated_rtsp_url
+from app.cameras import snapshot as snapshot_capture
 from app.database import get_db
 from app.models import Camera, MotionEvent, Recording, User
 
@@ -128,28 +129,19 @@ async def capture_snapshot(camera_id: int, request: Request, db: Session = Depen
         raise HTTPException(status_code=404, detail="Camera not found")
 
     storage = request.app.state.storage
-    snapshot_dir = storage.snapshot_dir_for_camera(camera)
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_path = snapshot_dir / f"cam{camera_id}_{ts}.jpg"
-
+    # Extract these while `camera` is still attached to an open session --
+    # capture_snapshot()'s ffmpeg call can take several seconds, and this
+    # request's session may expire the object's attributes by the time it
+    # returns. See app/cameras/snapshot.py's docstring for why it takes
+    # plain values instead of the ORM object.
     rtsp_url = build_authenticated_rtsp_url(camera)
+    snapshot_dir = storage.snapshot_dir_for_camera(camera)
 
-    cmd = [
-        "ffmpeg", "-y", "-nostdin", "-loglevel", "error",
-        "-rtsp_transport", "tcp", "-i", rtsp_url,
-        "-frames:v", "1", str(out_path),
-    ]
-    proc = await asyncio.create_subprocess_exec(*cmd, stderr=asyncio.subprocess.PIPE)
     try:
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
-    except asyncio.TimeoutError:
-        proc.kill()
-        raise HTTPException(status_code=504, detail="Snapshot capture timed out")
-
-    if proc.returncode != 0 or not out_path.exists():
-        logger.error("Snapshot failed for camera %s: %s", camera_id, stderr.decode(errors="replace"))
-        raise HTTPException(status_code=502, detail="Snapshot capture failed")
+        out_path = await snapshot_capture.capture_snapshot(rtsp_url, snapshot_dir, camera_id)
+    except snapshot_capture.SnapshotError as exc:
+        logger.error("Snapshot failed for camera %s: %s", camera_id, exc)
+        raise HTTPException(status_code=502, detail="Snapshot capture failed") from exc
 
     return {"ok": True, "path": str(out_path)}
 

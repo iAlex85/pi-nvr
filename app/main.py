@@ -60,6 +60,7 @@ async def lifespan(app: FastAPI):
     app.state.recording_engine = RecordingEngine(cfg, app.state.storage)
     app.state.camera_manager.set_recording_engine(app.state.recording_engine)
     app.state.camera_manager.set_notifications(app.state.notifications)
+    app.state.camera_manager.set_storage(app.state.storage)
     app.state.motion_supervisor = MotionSupervisor(
         cfg, app.state.recording_engine, app.state.notifications
     )
