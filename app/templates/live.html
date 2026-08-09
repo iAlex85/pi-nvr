@@ -2,18 +2,16 @@
 {% block title %}Live view — Pi-NVR{% endblock %}
 {% block page_title %}Live view{% endblock %}
 {% block content %}
-<div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
+<div style="display:flex; align-items:center; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
   <div class="section-title" style="margin:0;">View</div>
   <button class="btn" data-view="spotlight">Spotlight</button>
   <button class="btn" data-view="grid">All cameras</button>
   <div style="flex:1;"></div>
-  <label for="qualitySelect" style="font-size:0.85em; color:var(--text-dim);">Quality</label>
-  <select id="qualitySelect" class="btn" style="padding:4px 8px;">
-    <option value="low">Low (480p, fast)</option>
-    <option value="medium">Medium (640p)</option>
-    <option value="high">High (960p, more CPU)</option>
-    <option value="max">Max (1280p, slower)</option>
-  </select>
+  <div style="font-size:0.85em; color:var(--text-dim); margin-right:2px;">Quality</div>
+  <button class="btn" data-quality="low" title="480p, fastest, least CPU">Low</button>
+  <button class="btn" data-quality="medium" title="640p">Medium</button>
+  <button class="btn" data-quality="high" title="960p, more CPU">High</button>
+  <button class="btn" data-quality="max" title="1280p, slowest, most CPU">Max</button>
   <button class="btn" id="fullscreenBtn">Fullscreen</button>
 </div>
 

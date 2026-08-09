@@ -395,18 +395,20 @@
   });
   document.querySelector('[data-view="spotlight"]').classList.add("active");
 
-  const qualitySelect = document.getElementById("qualitySelect");
-  qualitySelect.value = getQuality();
-  qualitySelect.addEventListener("change", () => {
-    setQuality(qualitySelect.value);
-    // Force every visible tile to reconnect with the new width/fps --
-    // the same "only reconnect what changed" guard that avoids
-    // unnecessary reconnects on unrelated re-renders would otherwise
-    // also skip the reconnect this change actually needs.
-    renderedMainCameraId = null;
-    renderedGridCameraIds = null;
-    renderCurrentView();
+  document.querySelectorAll("[data-quality]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setQuality(btn.dataset.quality);
+      document.querySelectorAll("[data-quality]").forEach((b) => b.classList.toggle("active", b === btn));
+      // Force every visible tile to reconnect with the new width/fps --
+      // the same "only reconnect what changed" guard that avoids
+      // unnecessary reconnects on unrelated re-renders would otherwise
+      // also skip the reconnect this change actually needs.
+      renderedMainCameraId = null;
+      renderedGridCameraIds = null;
+      renderCurrentView();
+    });
   });
+  document.querySelector(`[data-quality="${getQuality()}"]`).classList.add("active");
 
   document.getElementById("fullscreenBtn").addEventListener("click", () => {
     const target = viewMode === "spotlight" ? spotlightLayout : gridLayout;
