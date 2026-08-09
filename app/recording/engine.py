@@ -154,7 +154,25 @@ class RecordingEngine:
 
         pattern = str(output_dir / f"cam{camera_id}_%Y%m%d_%H%M%S.{container}")
 
-        cmd = ["ffmpeg", "-nostdin", "-loglevel", "warning", "-rtsp_transport", "tcp", "-i", rtsp_url]
+        # Without a read timeout, ffmpeg can hang indefinitely waiting for
+        # data from a source that's gone silent (camera unplugged/powered
+        # off) instead of exiting -- which meant is_recording() (a bare
+        # "is the process still alive" check) stayed True forever, and
+        # CameraManager's health probe (which now correctly skips itself
+        # whenever a camera is "recording", to avoid a redundant second
+        # connection on single-RTSP-client hardware) never got a chance to
+        # notice the camera was actually gone. `-timeout` bounds how long
+        # ffmpeg will wait for stream data before erroring out, so a truly
+        # dead camera causes the process to exit (the existing
+        # _watch_process backoff/restart loop then takes over, and
+        # is_recording() correctly reports False in the gap between
+        # attempts) instead of masking the outage indefinitely.
+        stall_timeout = self.cfg.get("recording.stall_timeout_seconds", 15)
+        cmd = [
+            "ffmpeg", "-nostdin", "-loglevel", "warning",
+            "-rtsp_transport", "tcp", "-timeout", str(stall_timeout * 1_000_000),
+            "-i", rtsp_url,
+        ]
 
         if overlay_ts or overlay_name:
             drawtext = self._overlay_filter(camera_id, overlay_ts, overlay_name)

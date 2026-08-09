@@ -328,9 +328,17 @@ async def mjpeg_stream(
         # this project already had to fight hard for (see the tab-switch/
         # bfcache fixes in CHANGELOG); there's no "just always higher"
         # answer here, hence exposing it instead of hardcoding a guess.
+        # `-timeout`: without a read timeout, ffmpeg can hang indefinitely
+        # if the camera goes dark mid-stream (unplugged/powered off)
+        # instead of exiting -- which left this process registered as
+        # "still alive" forever, and since is_camera_actively_streamed()
+        # trusts that to skip the health probe, an unplugged camera could
+        # show as online indefinitely. Bounding the read stall means a
+        # truly dead camera actually frees this connection and lets the
+        # probe run again within a bounded time.
         cmd = [
             "ffmpeg", "-nostdin", "-loglevel", "error",
-            "-rtsp_transport", "tcp", "-i", rtsp_url,
+            "-rtsp_transport", "tcp", "-timeout", "10000000", "-i", rtsp_url,
             "-f", "mjpeg", "-q:v", "6", "-r", str(fps),
             "-vf", f"scale={width}:-2",
             "pipe:1",
@@ -473,9 +481,11 @@ async def audio_stream(camera_id: int, request: Request, db: Session = Depends(g
         # never use.
         rtsp_url = build_authenticated_rtsp_url(camera, substream=False)
 
+        # -timeout bounds a stalled read the same way the MJPEG endpoint's
+        # does -- see that endpoint's comment for why.
         cmd = [
             "ffmpeg", "-nostdin", "-loglevel", "error",
-            "-rtsp_transport", "tcp", "-i", rtsp_url,
+            "-rtsp_transport", "tcp", "-timeout", "10000000", "-i", rtsp_url,
             "-vn", "-acodec", "libmp3lame", "-b:a", "64k", "-ar", "44100",
             "-f", "mp3",
             "pipe:1",
