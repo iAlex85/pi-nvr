@@ -146,6 +146,34 @@ install_format_helper() {
   systemctl daemon-reload
 }
 
+install_mount_helper() {
+  # The Storage page'"'"'s "detected drives" auto-setup feature needs to run
+  # `mkdir`/`mount -a`/append to /etc/fstab as root, same NoNewPrivileges
+  # constraint as the format helper above -- see install_format_helper'"'"'s
+  # comment for the full rationale, this mirrors it exactly for a
+  # separate, narrower helper (pi-nvr-mount@.service) that mounts an
+  # already-formatted drive and persists it to fstab instead of
+  # formatting anything.
+  log "Installing drive auto-setup helper (systemd unit + polkit rule)..."
+
+  if ! command -v pkaction >/dev/null 2>&1 && ! command -v polkitd >/dev/null 2>&1; then
+    apt-get install -y polkitd 2>/dev/null || apt-get install -y policykit-1 2>/dev/null || {
+      err "Could not install polkit -- drive auto-setup from the UI will not work. Manual /etc/fstab editing from the shell is unaffected."
+      return 0
+    }
+  fi
+
+  install -m 700 -o root -g root "$REPO_DIR/scripts/mount_helper.sh" "$INSTALL_PREFIX/scripts/mount_helper.sh"
+
+  sed "s#__INSTALL_PREFIX__#$INSTALL_PREFIX#g"     "$REPO_DIR/systemd/pi-nvr-mount@.service" > /etc/systemd/system/pi-nvr-mount@.service
+
+  mkdir -p /etc/polkit-1/rules.d
+  sed "s#__SERVICE_USER__#$SERVICE_USER#g"     "$REPO_DIR/systemd/61-pi-nvr-mount.rules" > /etc/polkit-1/rules.d/61-pi-nvr-mount.rules
+  chmod 644 /etc/polkit-1/rules.d/61-pi-nvr-mount.rules
+
+  systemctl daemon-reload
+}
+
 install_systemd_service() {
   log "Installing systemd service..."
   sed \
@@ -176,6 +204,7 @@ main() {
   write_secrets
   set_permissions
   install_format_helper
+  install_mount_helper
   install_systemd_service
   start_service
 

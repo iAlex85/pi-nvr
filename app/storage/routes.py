@@ -126,6 +126,9 @@ class BlockDeviceOut(BaseModel):
     fstype: str | None
     mountpoint: str | None
     type: str
+    uuid: str | None
+    label: str | None
+    in_fstab: bool
     protected: bool
     protected_reason: str | None
 
@@ -136,12 +139,18 @@ class FormatDeviceRequest(BaseModel):
     filesystem: str = "ext4"
 
 
+class SetupDriveRequest(BaseModel):
+    device_path: str
+    confirm: str
+
+
 @router.get("/devices", response_model=list[BlockDeviceOut])
 async def list_block_devices(user: User = Depends(require_admin)):
     """Lists all block devices/partitions on the system (mounted or not),
-    for the Storage page's "format a new device" picker. Devices on the
-    OS's own disk are flagged as protected and should be shown disabled,
-    not offered as format targets, in the UI."""
+    for the Storage page's "format a new device" picker and "detected
+    drives" auto-setup section. Devices on the OS's own disk are flagged
+    as protected and should be shown disabled, not offered as targets,
+    in the UI."""
     import asyncio
 
     try:
@@ -151,7 +160,8 @@ async def list_block_devices(user: User = Depends(require_admin)):
     return [
         BlockDeviceOut(
             name=d.name, path=d.path, size_bytes=d.size_bytes, fstype=d.fstype,
-            mountpoint=d.mountpoint, type=d.type, protected=d.protected,
+            mountpoint=d.mountpoint, type=d.type, uuid=d.uuid, label=d.label,
+            in_fstab=d.in_fstab, protected=d.protected,
             protected_reason=d.protected_reason,
         )
         for d in devices
@@ -169,6 +179,25 @@ async def format_block_device(payload: FormatDeviceRequest, user: User = Depends
     try:
         await asyncio.get_event_loop().run_in_executor(
             None, device_format.format_device, payload.device_path, payload.confirm, payload.filesystem,
+        )
+    except device_format.DeviceFormatError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.post("/devices/setup")
+async def setup_detected_drive(payload: SetupDriveRequest, user: User = Depends(require_admin)):
+    """Mounts an already-formatted drive and persists it to /etc/fstab
+    (with `nofail`) so it survives a reboot without the user needing to
+    find its UUID and hand-edit fstab themselves. `confirm` must exactly
+    match `device_path`, the same friction-by-design pattern as
+    format_device() -- smaller blast radius than formatting, but still a
+    real system-config change made as root."""
+    import asyncio
+
+    try:
+        await asyncio.get_event_loop().run_in_executor(
+            None, device_format.setup_detected_drive, payload.device_path, payload.confirm,
         )
     except device_format.DeviceFormatError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

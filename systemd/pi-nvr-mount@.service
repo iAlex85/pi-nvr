@@ -1,0 +1,18 @@
+[Unit]
+Description=Pi-NVR drive auto-setup helper (%i)
+# This is a one-shot, root-owned helper triggered by the (unprivileged,
+# NoNewPrivileges=true) pi-nvr service to mount a specific block device
+# and persist it to /etc/fstab. It exists as a separate unit specifically
+# so pi-nvr.service itself can keep its hardening intact -- this narrow
+# helper is the only thing that ever runs with elevated privileges for
+# this feature, and it only ever does exactly what
+# scripts/mount_helper.sh does (which re-validates the device
+# independently before touching anything). Mirrors pi-nvr-format@.service
+# exactly -- see that unit's comment for the full rationale.
+
+[Service]
+Type=oneshot
+ExecStart=__INSTALL_PREFIX__/scripts/mount_helper.sh %i
+# No User= directive -- this runs as root, deliberately. Access is
+# gated by the polkit rule in /etc/polkit-1/rules.d/, which permits only
+# the pi-nvr user to start units matching this specific template name.

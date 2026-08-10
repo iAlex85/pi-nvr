@@ -38,6 +38,9 @@ class BlockDevice:
     mountpoint: str | None
     type: str  # "disk" or "part"
     parent: str | None  # parent disk name, for partitions
+    uuid: str | None = None
+    label: str | None = None
+    in_fstab: bool = False
     protected: bool = False
     protected_reason: str | None = None
 
@@ -78,9 +81,14 @@ def _protected_disk_names() -> set[str]:
 def list_devices() -> list[BlockDevice]:
     """Lists every block device and partition on the system, marking
     which ones are protected (part of the OS's own disk) so the UI can
-    grey those out instead of offering them as format targets."""
+    grey those out instead of offering them as format targets. Also
+    reports UUID/LABEL and whether each is already persisted in
+    /etc/fstab, for the "detected drives" auto-setup feature -- a
+    formatted-but-unmounted or mounted-but-not-persisted drive can be
+    told apart from one that's already fully set up without the user
+    needing to know what any of that means."""
     try:
-        result = _run(["lsblk", "-J", "-b", "-o", "NAME,PATH,SIZE,FSTYPE,MOUNTPOINT,TYPE,PKNAME"])
+        result = _run(["lsblk", "-J", "-b", "-o", "NAME,PATH,SIZE,FSTYPE,MOUNTPOINT,TYPE,PKNAME,UUID,LABEL"])
     except (subprocess.SubprocessError, OSError) as exc:
         raise DeviceFormatError(f"Could not list block devices: {exc}") from exc
     if result.returncode != 0:
@@ -92,6 +100,7 @@ def list_devices() -> list[BlockDevice]:
         raise DeviceFormatError(f"Could not parse lsblk output: {exc}") from exc
 
     protected_names = _protected_disk_names()
+    fstab_uuids = _fstab_uuids()
     devices: list[BlockDevice] = []
 
     def _walk(entries, parent_name=None):
@@ -100,6 +109,7 @@ def list_devices() -> list[BlockDevice]:
             device_type = entry.get("type", "")
             is_protected = name in protected_names or (parent_name and parent_name in protected_names)
             if device_type in ("part", "disk"):
+                uuid = entry.get("uuid") or None
                 devices.append(BlockDevice(
                     name=name,
                     path=entry.get("path") or f"/dev/{name}",
@@ -108,6 +118,9 @@ def list_devices() -> list[BlockDevice]:
                     mountpoint=entry.get("mountpoint"),
                     type=device_type,
                     parent=parent_name,
+                    uuid=uuid,
+                    label=entry.get("label") or None,
+                    in_fstab=bool(uuid and uuid in fstab_uuids),
                     protected=bool(is_protected),
                     protected_reason=(
                         "Part of the system's own OS disk -- refusing to offer this as a format target"
@@ -120,6 +133,24 @@ def list_devices() -> list[BlockDevice]:
 
     _walk(data.get("blockdevices", []))
     return devices
+
+
+def _fstab_uuids() -> set[str]:
+    """Reads (not writes) /etc/fstab, world-readable, so no root needed
+    here -- only actually adding an entry requires the privileged helper."""
+    uuids: set[str] = set()
+    try:
+        with open("/etc/fstab") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                first_field = line.split()[0] if line.split() else ""
+                if first_field.startswith("UUID="):
+                    uuids.add(first_field.removeprefix("UUID="))
+    except OSError:
+        pass
+    return uuids
 
 
 def format_device(device_path: str, confirm: str, filesystem: str = "ext4") -> None:
@@ -180,3 +211,61 @@ def format_device(device_path: str, confirm: str, filesystem: str = "ext4") -> N
         )
 
     logger.info("Successfully formatted %s as %s", device_path, filesystem)
+
+
+def setup_detected_drive(device_path: str, confirm: str) -> None:
+    """Mounts an already-formatted drive and persists it to /etc/fstab
+    (with `nofail`, so a missing drive can never hang boot -- matching
+    the convention already used by this project's own manually-added
+    entries). Idempotent: safe to call again on a drive that's already
+    partly or fully set up, it just skips whatever's already done.
+
+    Requires `confirm` to exactly match `device_path`, the same
+    friction-by-design pattern as format_device() -- this edits system
+    config (/etc/fstab) as root, which is a smaller blast radius than
+    formatting but still not something a single misclick should trigger."""
+    if not DEVICE_PATH_RE.match(device_path):
+        raise DeviceFormatError(f"Not a valid device path: {device_path}")
+    if confirm != device_path:
+        raise DeviceFormatError("Confirmation text does not match the device path")
+
+    protected_names = _protected_disk_names()
+    device_name = device_path.rsplit("/", 1)[-1]
+    try:
+        parent_result = _run(["lsblk", "-no", "PKNAME", device_path])
+        parent_name = parent_result.stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        parent_name = None
+
+    if device_name in protected_names or (parent_name and parent_name in protected_names):
+        raise DeviceFormatError(
+            "Refusing to set up this device: it is part of the system's own OS disk."
+        )
+
+    logger.info("Setting up detected drive %s (user-confirmed)", device_path)
+
+    # Same privilege-escalation pattern as format_device() -- see that
+    # function's comment for the full rationale. This unit mounts the
+    # drive (if not already) and appends an /etc/fstab entry (if not
+    # already present); scripts/mount_helper.sh re-validates the device
+    # isn't the OS's own disk independently, same defense-in-depth
+    # approach as the format helper.
+    escape_result = _run(["systemd-escape", device_path], timeout=10)
+    if escape_result.returncode != 0:
+        raise DeviceFormatError(f"Could not escape device path: {escape_result.stderr.strip()}")
+    instance_name = escape_result.stdout.strip()
+
+    result = _run(
+        ["systemctl", "start", "--wait", f"pi-nvr-mount@{instance_name}.service"],
+        timeout=60,
+    )
+    if result.returncode != 0:
+        journal = _run(
+            ["journalctl", "-u", f"pi-nvr-mount@{instance_name}.service", "-n", "20", "--no-pager"],
+            timeout=10,
+        )
+        raise DeviceFormatError(
+            f"Setup failed (see system logs for detail): {journal.stdout.strip()[-500:]}"
+        )
+
+    logger.info("Successfully set up %s", device_path)
