@@ -36,6 +36,11 @@ logger = logging.getLogger("pi_nvr.recording")
 
 RING_BUFFER_SEGMENTS = 6  # ring depth for motion pre-record capture
 
+# How often the reconciliation loop checks for newly-finalized continuous-
+# mode segments on a camera that's staying connected without crashing --
+# see _register_finalized_segments' docstring for why this exists at all.
+RECONCILE_INTERVAL_SECONDS = 60
+
 
 class _CameraRecordingState:
     def __init__(self, camera_id: int):
@@ -44,6 +49,7 @@ class _CameraRecordingState:
         self.mode: RecordingMode = RecordingMode.off
         self.output_dir: Path | None = None
         self.watcher_task: asyncio.Task | None = None
+        self.reconcile_task: asyncio.Task | None = None
         self.motion_extend_until: float = 0.0
         self.current_recording_db_id: int | None = None
 
@@ -89,6 +95,17 @@ class RecordingEngine:
             rtsp_url = build_authenticated_rtsp_url(camera)
 
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Register any segment files a previous process run (or a prior,
+        # not-cleanly-shut-down app run) left behind before starting a new
+        # one -- this is what actually makes continuous-mode recordings
+        # show up in Playback at all (see _register_finalized_segments'
+        # docstring for why this was needed). Safe to call unconditionally:
+        # it's idempotent (checks the DB before inserting anything) and a
+        # fresh/empty output_dir just means nothing to find.
+        if mode == RecordingMode.continuous:
+            self._register_finalized_segments(camera_id, output_dir, include_newest=True)
+
         state = self._states.setdefault(camera_id, _CameraRecordingState(camera_id))
         state.mode = mode
         state.output_dir = output_dir
@@ -102,6 +119,8 @@ class RecordingEngine:
             stderr=asyncio.subprocess.PIPE,
         )
         state.watcher_task = asyncio.create_task(self._watch_process(camera_id))
+        if mode == RecordingMode.continuous and state.reconcile_task is None:
+            state.reconcile_task = asyncio.create_task(self._reconcile_loop(camera_id))
 
     async def _stop_camera(self, camera_id: int) -> None:
         state = self._states.get(camera_id)
@@ -115,6 +134,14 @@ class RecordingEngine:
                 state.process.kill()
         if state.watcher_task:
             state.watcher_task.cancel()
+        if state.reconcile_task:
+            state.reconcile_task.cancel()
+        # The process is now confirmed dead, so the file it was last
+        # writing is finalized too -- catch it here, or a deliberately
+        # stopped recording's final segment would never get registered
+        # (nothing else would ever call this again for it).
+        if state.mode == RecordingMode.continuous and state.output_dir is not None:
+            self._register_finalized_segments(camera_id, state.output_dir, include_newest=True)
         self._states.pop(camera_id, None)
 
     async def _watch_process(self, camera_id: int) -> None:
@@ -143,6 +170,98 @@ class RecordingEngine:
                     return
             await self._start_camera(camera_id)
             return  # _start_camera spawns a fresh watcher task
+
+    async def _reconcile_loop(self, camera_id: int) -> None:
+        """Periodically catches up on continuous-mode segments that
+        finished via ffmpeg's own segment_seconds rotation, without the
+        process ever crashing/restarting -- _register_finalized_segments
+        is also called around process start/stop, but a camera that
+        simply never crashes could otherwise go a very long time
+        (hours, until the app itself restarts) before its rotated
+        segments ever get registered and become visible in Playback."""
+        while self._running:
+            await asyncio.sleep(RECONCILE_INTERVAL_SECONDS)
+            state = self._states.get(camera_id)
+            if state is None or state.mode != RecordingMode.continuous or state.output_dir is None:
+                return
+            self._register_finalized_segments(camera_id, state.output_dir, include_newest=False)
+
+    def _register_finalized_segments(self, camera_id: int, output_dir: Path, include_newest: bool) -> None:
+        """Continuous-mode recording writes segment files directly via
+        ffmpeg's own `-f segment` muxer -- nothing else in this process
+        is ever notified when a segment file finishes, so without this,
+        the files exist correctly on disk but the `recordings` DB table
+        (which Playback reads from) never learns about them and they're
+        permanently invisible in the UI. This scans the output directory
+        for segment files not yet in the DB and registers them.
+
+        `include_newest` controls whether the most-recently-created
+        matching file is included: pass False during periodic
+        reconciliation of a still-running recording (that file is
+        presumably still being actively written to, so registering it
+        now would lock in a wrong/truncated duration and size), and True
+        when called right before starting a new process or right after
+        stopping one -- in both cases, whatever ffmpeg was last writing
+        to has now genuinely stopped growing."""
+        container = self.cfg.get("recording.container", "mp4")
+        candidates = sorted(output_dir.glob(f"cam{camera_id}_*.{container}"))
+        # Excludes ring-buffer and motion-preserved segments, which use
+        # their own distinct filename markers and DB-registration paths
+        # (ring segments are meant to be overwritten and never
+        # registered; motion segments are registered by
+        # _keep_ring_segments, not here).
+        candidates = [
+            p for p in candidates
+            if "_ring_" not in p.name and "_motion_" not in p.name
+        ]
+        if not candidates:
+            return
+        if not include_newest:
+            candidates = candidates[:-1]
+        if not candidates:
+            return
+
+        with session_scope() as db:
+            already_registered = {
+                path for (path,) in db.query(Recording.file_path).filter(
+                    Recording.camera_id == camera_id
+                ).all()
+            }
+            local_offset = datetime.datetime.now().astimezone().utcoffset()
+            for path in candidates:
+                path_str = str(path)
+                if path_str in already_registered:
+                    continue
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue
+                if stat.st_size == 0:
+                    # Empty file -- either a segment that opened but never
+                    # received any data before the process died (this
+                    # camera's frequent early-EOF pattern can produce
+                    # these), or a race with ffmpeg still creating it.
+                    # Either way, nothing worth showing in Playback.
+                    continue
+
+                started_at = _parse_segment_timestamp(path.name, camera_id, container)
+                if started_at is not None and local_offset is not None:
+                    started_at = (started_at - local_offset).replace(tzinfo=datetime.timezone.utc)
+                ended_at = datetime.datetime.fromtimestamp(stat.st_mtime, tz=datetime.timezone.utc)
+                if started_at is None:
+                    started_at = ended_at
+                duration = max((ended_at - started_at).total_seconds(), 0.0)
+
+                db.add(Recording(
+                    camera_id=camera_id,
+                    file_path=path_str,
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    trigger="continuous",
+                    size_bytes=stat.st_size,
+                    duration_seconds=duration,
+                ))
+                logger.info("Registered recording segment for camera %s: %s (%.0fs)", camera_id, path.name, duration)
 
     def _build_ffmpeg_command(
         self, camera_id: int, rtsp_url: str, output_dir: Path, mode: RecordingMode
@@ -285,3 +404,20 @@ class RecordingEngine:
             if camera:
                 camera.recording_mode = RecordingMode.off
         await self._stop_camera(camera_id)
+
+
+def _parse_segment_timestamp(filename: str, camera_id: int, container: str) -> datetime.datetime | None:
+    """Parses the naive local timestamp embedded in a continuous-mode
+    segment's filename by ffmpeg's `-strftime 1` (cam{id}_%Y%m%d_%H%M%S).
+    Returns a naive datetime (caller is responsible for attaching the
+    correct UTC offset) or None if the filename doesn't match the
+    expected pattern."""
+    prefix = f"cam{camera_id}_"
+    suffix = f".{container}"
+    if not (filename.startswith(prefix) and filename.endswith(suffix)):
+        return None
+    middle = filename[len(prefix):-len(suffix)]
+    try:
+        return datetime.datetime.strptime(middle, "%Y%m%d_%H%M%S")
+    except ValueError:
+        return None
