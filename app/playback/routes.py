@@ -22,6 +22,7 @@ from app.cameras.url_utils import build_authenticated_rtsp_url
 from app.cameras import snapshot as snapshot_capture
 from app.database import get_db
 from app.models import Camera, MotionEvent, Recording, User
+from app.playback import transcode
 
 logger = logging.getLogger("pi_nvr.playback")
 router = APIRouter()
@@ -97,8 +98,17 @@ VIDEO_MIME_TYPES = {
 @router.get("/stream/{recording_id}")
 def stream_recording(recording_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     rec = _get_recording_or_404(db, recording_id)
-    media_type = VIDEO_MIME_TYPES.get(Path(rec.file_path).suffix.lower(), "application/octet-stream")
-    return FileResponse(rec.file_path, media_type=media_type)
+    source_path = Path(rec.file_path)
+    try:
+        playable_path = transcode.ensure_playable(source_path)
+    except transcode.TranscodeError as exc:
+        logger.error("Playback conversion failed for recording %s: %s", recording_id, exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not prepare this recording for playback: {exc}",
+        ) from exc
+    media_type = VIDEO_MIME_TYPES.get(playable_path.suffix.lower(), "application/octet-stream")
+    return FileResponse(playable_path, media_type=media_type)
 
 
 @router.get("/download/{recording_id}")
@@ -116,6 +126,7 @@ def delete_recording(recording_id: int, db: Session = Depends(get_db), user: Use
     if rec.locked:
         raise HTTPException(status_code=409, detail="Recording is locked; unlock it before deleting")
     path = Path(rec.file_path)
+    transcode.delete_cached(path)
     if path.exists():
         path.unlink()
     db.delete(rec)

@@ -203,6 +203,15 @@ class StorageManager:
     def _delete_recording_file(self, rec: Recording) -> None:
         try:
             path = Path(rec.file_path)
+            # Playback caches a browser-playable derived .mp4 alongside
+            # any .mkv recording the first time it's played (see
+            # app/playback/transcode.py) -- retention deletes the
+            # original directly rather than going through the API's
+            # delete endpoint, so it has to clean up that cache itself
+            # or an orphaned derived file outlives the recording it came
+            # from.
+            from app.playback import transcode
+            transcode.delete_cached(path)
             if path.exists():
                 path.unlink()
         except OSError as exc:
