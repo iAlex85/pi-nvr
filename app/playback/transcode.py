@@ -86,6 +86,13 @@ def ensure_playable(source_path: Path) -> Path:
             "-i", str(source_path),
             "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
             "-movflags", "+faststart",
+            # ffmpeg normally picks the output muxer by guessing from the
+            # file extension -- the .mp4.tmp temp filename (deliberately
+            # non-final so a reader never sees a half-written file) isn'"'"'t
+            # a recognized extension, so that guess fails outright
+            # ("unable to choose an output format"). Being explicit here
+            # means the temp filename'"'"'s exact shape stops mattering.
+            "-f", "mp4",
             str(tmp_dest),
         ]
         logger.info("Converting %s for browser playback", source_path.name)
