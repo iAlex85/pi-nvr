@@ -2,6 +2,7 @@
 {% block title %}Playback — Pi-NVR{% endblock %}
 {% block page_title %}Playback{% endblock %}
 {% block content %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/plyr/3.7.8/plyr.css" />
 <div style="display:grid; grid-template-columns: 260px 1fr; gap:20px;">
   <div class="card">
     <div class="field">
@@ -44,7 +45,14 @@
   </div>
 
   <div>
-    <video id="player" controls style="width:100%; background:#000; border-radius:3px; margin-bottom:14px;"></video>
+    <!-- Sticky: stays pinned near the top of the viewport while the
+         recordings table below it scrolls, so picking an older clip
+         (further down the list) doesn't require scrolling back up to
+         see it play. `top` matches the topbar's height so it settles
+         just underneath it rather than overlapping. -->
+    <div id="playerSticky" style="position:sticky; top:14px; z-index:5; background:var(--bg); padding-bottom:14px;">
+      <video id="player" playsinline style="width:100%; background:#000; border-radius:3px; display:block;"></video>
+    </div>
     <table id="recordingsTable">
       <thead><tr><th>Started</th><th>Trigger</th><th>Duration</th><th>Size</th><th></th></tr></thead>
       <tbody id="recordingsBody"></tbody>
@@ -53,5 +61,6 @@
 </div>
 {% endblock %}
 {% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plyr/3.7.8/plyr.min.js"></script>
 <script src="/static/js/playback.js?v={{ static_version }}"></script>
 {% endblock %}

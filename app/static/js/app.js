@@ -162,8 +162,33 @@ const PiNVR = (() => {
     }
   }
 
+  function initMobileNav() {
+    const sidenav = document.querySelector(".sidenav");
+    const hamburgerBtn = document.getElementById("hamburgerBtn");
+    const backdrop = document.getElementById("sidenavBackdrop");
+    if (!sidenav || !hamburgerBtn || !backdrop) return;
+
+    function setOpen(open) {
+      sidenav.classList.toggle("open", open);
+      backdrop.classList.toggle("open", open);
+      hamburgerBtn.setAttribute("aria-expanded", String(open));
+    }
+
+    hamburgerBtn.addEventListener("click", () => setOpen(!sidenav.classList.contains("open")));
+    backdrop.addEventListener("click", () => setOpen(false));
+    // Navigating to a different page is itself a full page load on this
+    // multi-page app, which naturally resets everything -- but tapping
+    // the link the menu is already open for (e.g. re-tapping "Live view"
+    // while already on it) wouldn't trigger a navigation, so still close
+    // explicitly on any nav-link tap for a consistent feel.
+    sidenav.querySelectorAll(".nav-link").forEach((link) => {
+      link.addEventListener("click", () => setOpen(false));
+    });
+  }
+
   function init() {
     markActiveNav();
+    initMobileNav();
     const logoutBtn = document.getElementById("logoutBtn");
     if (logoutBtn) logoutBtn.addEventListener("click", logout);
 

@@ -16,6 +16,30 @@
   <button class="btn" id="restartServiceBtn">Restart Pi-NVR service</button>
 </div>
 
+<div class="section-title">Recording performance</div>
+<div class="card" style="max-width:520px; margin-bottom:24px;">
+  <p style="color:var(--text-dim); font-size:12px; margin-top:0;">
+    The camera name/timestamp overlay burned into recordings requires
+    decoding and re-encoding video (drawing text onto frames can't be
+    done as a cheap stream copy) -- this is the single biggest driver of
+    CPU load during recording, especially on a Pi 3 with no hardware
+    video decode. Turning <strong>both</strong> off switches recording
+    back to a near-zero-cost stream copy for every camera -- turning off
+    only one still requires the same decode/encode pipeline for the
+    other, so it won't save much on its own. Applies to all cameras;
+    takes effect on each one's next recording restart (automatic -- no
+    need to restart the service).
+  </p>
+  <div class="field" style="display:flex; gap:10px; align-items:center;">
+    <input type="checkbox" id="overlayTimestamp" style="width:auto;" />
+    <label style="margin:0;" for="overlayTimestamp">Burn in timestamp</label>
+  </div>
+  <div class="field" style="display:flex; gap:10px; align-items:center; margin-bottom:0;">
+    <input type="checkbox" id="overlayCameraName" style="width:auto;" />
+    <label style="margin:0;" for="overlayCameraName">Burn in camera name</label>
+  </div>
+</div>
+
 <div class="section-title">AI features <span style="color:var(--text-faint); text-transform:none; letter-spacing:normal;">(beta / preview)</span></div>
 <div class="card" style="max-width:520px; margin-bottom:24px;">
   <p style="color:var(--text-dim); font-size:12px; margin-top:0;">
@@ -70,6 +94,17 @@
     } catch (e) { /* non-fatal -- toggles just stay unchecked */ }
   }
 
+  async function loadOverlayToggles() {
+    try {
+      const cfg = await PiNVR.api("/system/settings");
+      const overlay = (cfg.recording && cfg.recording.overlay) || {};
+      // Both default to true (matches RecordingEngine's own fallback) if
+      // not present in config yet.
+      document.getElementById("overlayTimestamp").checked = overlay.timestamp !== false;
+      document.getElementById("overlayCameraName").checked = overlay.camera_name !== false;
+    } catch (e) { /* non-fatal -- toggles just stay unchecked */ }
+  }
+
   function wireAiToggle(elementId, dottedKey) {
     document.getElementById(elementId).addEventListener("change", async (e) => {
       try {
@@ -93,6 +128,25 @@
   wireAiToggle("aiPeopleDetection", "ai.people_detection_enabled");
   wireAiToggle("aiAnimalDetection", "ai.animal_detection_enabled");
   loadAiToggles();
+
+  function wireOverlayToggle(elementId, dottedKey) {
+    document.getElementById(elementId).addEventListener("change", async (e) => {
+      try {
+        await PiNVR.api("/system/settings", {
+          method: "PUT",
+          body: { dotted_key: dottedKey, value: e.target.checked },
+        });
+        PiNVR.toast("Saved — applies to all cameras on their next recording restart");
+      } catch (err) {
+        e.target.checked = !e.target.checked; // revert on failure
+        PiNVR.toast(err.message, true);
+      }
+    });
+  }
+
+  wireOverlayToggle("overlayTimestamp", "recording.overlay.timestamp");
+  wireOverlayToggle("overlayCameraName", "recording.overlay.camera_name");
+  loadOverlayToggles();
 
   document.getElementById("passwordForm").addEventListener("submit", async (e) => {
     e.preventDefault();

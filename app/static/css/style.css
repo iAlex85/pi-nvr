@@ -403,7 +403,30 @@ a.camera-tile { display: block; text-decoration: none; color: inherit; cursor: p
   .shell { grid-template-columns: 6px 1fr; }
   .sidenav { position: fixed; left: 6px; top: 0; bottom: 0; z-index: 20; transform: translateX(-100%); transition: transform 0.2s ease; }
   .sidenav.open { transform: translateX(0); }
+  .hamburger-btn { display: flex; }
+  .topbar-stats { display: none; } /* not enough room alongside the hamburger on narrow screens */
 }
+.hamburger-btn {
+  display: none; /* shown only under the 760px breakpoint above */
+  align-items: center;
+  justify-content: center;
+  width: 34px; height: 34px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  cursor: pointer;
+  margin-right: 10px;
+}
+.hamburger-btn:hover { border-color: var(--text-faint); }
+.hamburger-btn svg { width: 18px; height: 18px; }
+.sidenav-backdrop {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(8, 9, 11, 0.55);
+  z-index: 19; /* just under .sidenav's z-index:20 */
+}
+.sidenav-backdrop.open { display: block; }
 
 /* ---------- Dialogs / modals ---------- */
 
@@ -421,3 +444,14 @@ dialog[open] {
   from { opacity: 0; transform: translateY(-6px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* ---------- Plyr video player skin (Playback page) ---------- */
+:root {
+  --plyr-color-main: var(--amber);
+  --plyr-video-background: #000;
+  --plyr-menu-background: var(--panel-raised);
+  --plyr-menu-color: var(--text);
+  --plyr-tooltip-background: var(--panel-raised);
+  --plyr-tooltip-color: var(--text);
+}
+.plyr { border-radius: var(--radius); overflow: hidden; }

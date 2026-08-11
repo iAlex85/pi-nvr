@@ -44,6 +44,9 @@
 
     <div class="main">
       <header class="topbar">
+        <button class="hamburger-btn" id="hamburgerBtn" type="button" aria-label="Toggle menu" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
         <div class="topbar-title">{% block page_title %}{% endblock %}</div>
         <div class="topbar-stats" id="topbarStats">
           <span class="stat-readout" data-stat="cpu">CPU --%</span>
@@ -58,6 +61,8 @@
       </main>
     </div>
   </div>
+
+  <div class="sidenav-backdrop" id="sidenavBackdrop"></div>
 
   <div id="toastRoot" class="toast-root" aria-live="polite"></div>
 

@@ -4,11 +4,37 @@
   const filterType = document.getElementById("filterType");
   const calendarDays = document.getElementById("calendarDays");
   const recordingsBody = document.getElementById("recordingsBody");
-  const player = document.getElementById("player");
+  const videoEl = document.getElementById("player");
   const searchStartDate = document.getElementById("searchStartDate");
   const searchStartTime = document.getElementById("searchStartTime");
   const searchEndDate = document.getElementById("searchEndDate");
   const searchEndTime = document.getElementById("searchEndTime");
+
+  // Plyr gives a consistent skin/control layout across browsers (native
+  // <video> controls look different on Safari vs Chrome vs mobile) and
+  // adds speed control for free. Falls back to the plain native <video>
+  // element (still fully functional) if the CDN script didn't load --
+  // e.g. offline/local-network-only use where cdnjs isn't reachable.
+  const player = (typeof Plyr !== "undefined")
+    ? new Plyr(videoEl, {
+        controls: [
+          "play-large", "rewind", "play", "fast-forward", "progress",
+          "current-time", "duration", "mute", "volume", "settings",
+          "pip", "airplay", "fullscreen",
+        ],
+        speed: { selected: 1, options: [0.25, 0.5, 1, 1.5, 2] },
+      })
+    : null;
+
+  function setVideoSource(url) {
+    if (player) {
+      player.source = { type: "video", sources: [{ src: url, type: "video/mp4" }] };
+      player.play().catch(() => {});
+    } else {
+      videoEl.src = url;
+      videoEl.play().catch(() => {});
+    }
+  }
 
   let activeSearchRange = null; // {start, end} while a date/time search is active, else null
 
@@ -109,8 +135,7 @@
     const playId = e.target.getAttribute("data-play");
     const deleteId = e.target.getAttribute("data-delete");
     if (playId) {
-      player.src = `/api/playback/stream/${playId}`;
-      player.play().catch(() => {});
+      setVideoSource(`/api/playback/stream/${playId}`);
     }
     if (deleteId) {
       if (!confirm("Delete this recording?")) return;
