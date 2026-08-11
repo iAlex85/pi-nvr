@@ -60,7 +60,14 @@ button { font-family: inherit; }
 .shell {
   display: grid;
   grid-template-columns: 10px 180px 1fr;
-  min-height: 100vh;
+  height: 100vh; /* fixed, not min-height: .content below relies on this to
+                    establish a real internal scrollport (flex:1 + overflow-y:
+                    auto only creates one when its ancestor chain has a
+                    definite height). With min-height, .shell could grow past
+                    the viewport, so .content never actually overflowed
+                    *itself* — the whole page scrolled instead, and
+                    position:sticky inside .content had no scrolling ancestor
+                    to stick within, especially in Safari. */
 }
 
 .rail {
@@ -253,6 +260,8 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { text-align: left; color: var(--text-faint); font-weight: 500; text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 td { padding: 10px; border-bottom: 1px solid var(--border); }
 tr:hover td { background: var(--panel-raised); }
+tr.playing td { background: rgba(232, 163, 61, 0.1); border-bottom-color: var(--amber-dim); }
+tr.playing td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
 
 .badge {
   display: inline-flex;
@@ -399,15 +408,8 @@ a.camera-tile { display: block; text-decoration: none; color: inherit; cursor: p
 .login-brand .brand-mark { display: block; font-size: 28px; color: var(--amber); margin-bottom: 6px; }
 .login-error { color: var(--red); font-size: 12px; margin-top: 10px; min-height: 14px; }
 
-@media (max-width: 760px) {
-  .shell { grid-template-columns: 6px 1fr; }
-  .sidenav { position: fixed; left: 6px; top: 0; bottom: 0; z-index: 20; transform: translateX(-100%); transition: transform 0.2s ease; }
-  .sidenav.open { transform: translateX(0); }
-  .hamburger-btn { display: flex; }
-  .topbar-stats { display: none; } /* not enough room alongside the hamburger on narrow screens */
-}
 .hamburger-btn {
-  display: none; /* shown only under the 760px breakpoint above */
+  display: none; /* shown only under the 760px breakpoint below */
   align-items: center;
   justify-content: center;
   width: 34px; height: 34px;
@@ -420,6 +422,14 @@ a.camera-tile { display: block; text-decoration: none; color: inherit; cursor: p
 }
 .hamburger-btn:hover { border-color: var(--text-faint); }
 .hamburger-btn svg { width: 18px; height: 18px; }
+
+@media (max-width: 760px) {
+  .shell { grid-template-columns: 6px 1fr; }
+  .sidenav { position: fixed; left: 6px; top: 0; bottom: 0; z-index: 20; transform: translateX(-100%); transition: transform 0.2s ease; }
+  .sidenav.open { transform: translateX(0); }
+  .hamburger-btn { display: flex; }
+  .topbar-stats { display: none; } /* not enough room alongside the hamburger on narrow screens */
+}
 .sidenav-backdrop {
   display: none;
   position: fixed; inset: 0;

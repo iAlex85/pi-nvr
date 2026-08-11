@@ -83,7 +83,7 @@
       const recordings = await PiNVR.api(`/recordings?${params.toString()}`);
 
       recordingsBody.innerHTML = recordings.map((r) => `
-        <tr>
+        <tr data-row-id="${r.id}" class="${String(r.id) === String(nowPlayingId) ? "playing" : ""}">
           <td>${new Date(r.started_at).toLocaleString()}</td>
           <td>${r.trigger}</td>
           <td>${r.duration_seconds ? r.duration_seconds.toFixed(0) + "s" : "--"}</td>
@@ -95,6 +95,18 @@
           </td>
         </tr>`).join("") || `<tr><td colspan="5" style="color:var(--text-faint);">No recordings match.</td></tr>`;
     } catch (e) { PiNVR.toast(e.message, true); }
+  }
+
+  // Tracks which recording is loaded in the player so the matching table
+  // row can be highlighted, including across a loadRecordings() re-render
+  // (e.g. after a search or filter change while something is still playing).
+  let nowPlayingId = null;
+
+  function markPlayingRow(id) {
+    nowPlayingId = id;
+    recordingsBody.querySelectorAll("tr[data-row-id]").forEach((tr) => {
+      tr.classList.toggle("playing", String(tr.getAttribute("data-row-id")) === String(id));
+    });
   }
 
   function loadAll() {
@@ -136,6 +148,7 @@
     const deleteId = e.target.getAttribute("data-delete");
     if (playId) {
       setVideoSource(`/api/playback/stream/${playId}`);
+      markPlayingRow(playId);
     }
     if (deleteId) {
       if (!confirm("Delete this recording?")) return;
