@@ -28,6 +28,7 @@ import shlex
 from pathlib import Path
 
 from app.config import Config
+from app.cameras.device_lock import acquire_device_slot, release_device_slot
 from app.cameras.url_utils import build_authenticated_rtsp_url
 from app.database import session_scope
 from app.models import Camera, Recording, RecordingMode
@@ -52,6 +53,8 @@ class _CameraRecordingState:
         self.reconcile_task: asyncio.Task | None = None
         self.motion_extend_until: float = 0.0
         self.current_recording_db_id: int | None = None
+        self.rtsp_url: str | None = None
+        self.holds_device_slot: bool = False
 
 
 class RecordingEngine:
@@ -109,6 +112,17 @@ class RecordingEngine:
         state = self._states.setdefault(camera_id, _CameraRecordingState(camera_id))
         state.mode = mode
         state.output_dir = output_dir
+        state.rtsp_url = rtsp_url
+
+        # Waits (indefinitely) for this physical device's single RTSP
+        # slot -- see app/cameras/device_lock.py. Recording has no
+        # deadline to give up by, unlike live view, so it just waits its
+        # turn rather than failing; this also means a camera's own live
+        # view/snapshot request that got here first briefly delays this
+        # recording's (re)start, which is the correct trade-off given the
+        # hardware only allows one connection at all.
+        await acquire_device_slot(rtsp_url)
+        state.holds_device_slot = True
 
         cmd = self._build_ffmpeg_command(camera_id, rtsp_url, output_dir, mode)
         logger.info("Starting recording for camera %s: %s", camera_id, shlex.join(cmd))
@@ -136,6 +150,7 @@ class RecordingEngine:
             state.watcher_task.cancel()
         if state.reconcile_task:
             state.reconcile_task.cancel()
+        self._release_slot(state)
         # The process is now confirmed dead, so the file it was last
         # writing is finalized too -- catch it here, or a deliberately
         # stopped recording's final segment would never get registered
@@ -143,6 +158,15 @@ class RecordingEngine:
         if state.mode == RecordingMode.continuous and state.output_dir is not None:
             self._register_finalized_segments(camera_id, state.output_dir, include_newest=True)
         self._states.pop(camera_id, None)
+
+    def _release_slot(self, state: "_CameraRecordingState") -> None:
+        """Releases this state's hold on its device's RTSP slot, if it
+        currently has one -- the single place that does so, so the
+        holds_device_slot flag stays an accurate record of ownership and
+        two code paths can never both try to release the same slot."""
+        if state.holds_device_slot and state.rtsp_url:
+            release_device_slot(state.rtsp_url)
+            state.holds_device_slot = False
 
     async def _watch_process(self, camera_id: int) -> None:
         """Restart the ffmpeg process with backoff if it dies unexpectedly
@@ -162,6 +186,12 @@ class RecordingEngine:
                 "Recording process for camera %s exited (code=%s): %s",
                 camera_id, returncode, stderr.decode(errors="replace")[-500:],
             )
+            # Release the device slot for the duration of the backoff --
+            # this is the window that lets a live-view/snapshot request
+            # actually get through on a camera that's continuously
+            # recording (see app/cameras/device_lock.py). Re-acquired by
+            # the next _start_camera call below.
+            self._release_slot(state)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
             with session_scope() as db:

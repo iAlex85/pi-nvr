@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.auth.dependencies import require_admin, get_current_user
 from app.cameras import onvif_discovery, network_scan, ptz as ptz_mod
 from app.cameras import onvif_raw
+from app.cameras.device_lock import acquire_device_slot, release_device_slot
 from app.cameras.url_utils import build_authenticated_rtsp_url
 from app.cameras.crypto import encrypt
 from app.database import get_db
@@ -239,6 +240,13 @@ _active_mjpeg_processes: dict[int, "_asyncio.subprocess.Process"] = {}
 # exactly the kind of overlap a single-RTSP-client camera can't handle.
 _mjpeg_locks: dict[int, "_asyncio.Lock"] = {}
 
+# How long a live-view request will wait for this camera's *physical
+# device* RTSP slot (see app/cameras/device_lock.py) before giving up.
+# Long enough to usually catch the gap between a continuously-recording
+# camera's reconnect attempts, short enough that a user clicking into
+# Spotlight gets a clear "camera busy" response instead of a long hang.
+DEVICE_SLOT_WAIT_SECONDS = 4.0
+
 
 def _get_mjpeg_lock(camera_id: int) -> "_asyncio.Lock":
     lock = _mjpeg_locks.get(camera_id)
@@ -336,6 +344,25 @@ async def mjpeg_stream(
         # show as online indefinitely. Bounding the read stall means a
         # truly dead camera actually frees this connection and lets the
         # probe run again within a bounded time.
+        # This camera's physical device (shared with its sibling channel
+        # on dual-lens hardware, and with anything currently recording)
+        # only tolerates one RTSP connection at a time -- see
+        # app/cameras/device_lock.py. Wait briefly for the slot rather
+        # than spawning ffmpeg straight into a connection that's certain
+        # to fail; if nothing frees up in time, fail clearly instead of
+        # returning a stream that silently never produces a frame.
+        got_slot = await acquire_device_slot(rtsp_url, timeout=DEVICE_SLOT_WAIT_SECONDS)
+        if not got_slot:
+            logger.warning("Live view: device busy for camera %s, giving up after %.0fs", camera_id, DEVICE_SLOT_WAIT_SECONDS)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Camera busy: this hardware only allows one active connection "
+                    "(shared with its paired camera and with recording). Try again "
+                    "in a few seconds."
+                ),
+            )
+
         cmd = [
             "ffmpeg", "-nostdin", "-loglevel", "error",
             "-rtsp_transport", "tcp", "-timeout", "10000000", "-i", rtsp_url,
@@ -389,6 +416,7 @@ async def mjpeg_stream(
                     proc.kill()
             if _active_mjpeg_processes.get(camera_id) is proc:
                 del _active_mjpeg_processes[camera_id]
+            release_device_slot(rtsp_url)
 
     return StreamingResponse(
         frame_generator(),
@@ -481,6 +509,21 @@ async def audio_stream(camera_id: int, request: Request, db: Session = Depends(g
         # never use.
         rtsp_url = build_authenticated_rtsp_url(camera, substream=False)
 
+        # Same physical-device slot as MJPEG live view and recording --
+        # see app/cameras/device_lock.py and the identical wait in
+        # mjpeg_stream() above.
+        got_slot = await acquire_device_slot(rtsp_url, timeout=DEVICE_SLOT_WAIT_SECONDS)
+        if not got_slot:
+            logger.warning("Live audio: device busy for camera %s, giving up after %.0fs", camera_id, DEVICE_SLOT_WAIT_SECONDS)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Camera busy: this hardware only allows one active connection "
+                    "(shared with its paired camera and with recording). Try again "
+                    "in a few seconds."
+                ),
+            )
+
         # -timeout bounds a stalled read the same way the MJPEG endpoint's
         # does -- see that endpoint's comment for why.
         cmd = [
@@ -504,6 +547,7 @@ async def audio_stream(camera_id: int, request: Request, db: Session = Depends(g
                 stderr = await proc.stderr.read()
             detail = stderr.decode(errors="replace")[-500:].strip() or "ffmpeg exited immediately with no error output"
             logger.error("Live audio: giving up for camera %s: %s", camera_id, detail)
+            release_device_slot(rtsp_url)
             raise HTTPException(
                 status_code=503,
                 detail=(
@@ -537,6 +581,7 @@ async def audio_stream(camera_id: int, request: Request, db: Session = Depends(g
                     proc.kill()
             if _active_audio_processes.get(camera_id) is proc:
                 del _active_audio_processes[camera_id]
+            release_device_slot(rtsp_url)
 
     return StreamingResponse(
         audio_generator(),

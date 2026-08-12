@@ -19,9 +19,16 @@ import datetime
 import logging
 from pathlib import Path
 
+from app.cameras.device_lock import acquire_device_slot, release_device_slot
+
 logger = logging.getLogger("pi_nvr.cameras.snapshot")
 
 CAPTURE_TIMEOUT_SECONDS = 15
+# How long to wait for this device's single RTSP slot (see
+# app/cameras/device_lock.py) before giving up -- shorter than live
+# view's wait since a snapshot is a background/best-effort action, not
+# something a user is actively staring at waiting for.
+DEVICE_SLOT_WAIT_SECONDS = 3.0
 # How many snapshot files to keep per camera. Manual "Snap" clicks were
 # rare enough that this never mattered before, but periodic capture can
 # now run every minute or so indefinitely -- without pruning, this
@@ -38,28 +45,40 @@ async def capture_snapshot(rtsp_url: str, snapshot_dir: Path, camera_id: int) ->
     to disk, pruning older snapshots for this camera down to
     KEEP_LATEST_N. Raises SnapshotError on failure.
 
-    Callers are responsible for making sure this doesn't collide with
-    another connection to the same camera (recording, live view, audio)
-    -- this project's target hardware doesn't tolerate a second RTSP
-    connection attempt gracefully."""
+    Waits briefly for this camera's physical device's single RTSP slot
+    (see app/cameras/device_lock.py) -- this project's target hardware
+    doesn't tolerate a second RTSP connection attempt gracefully, so
+    recording, live view, audio, and snapshot capture all share that
+    one lock rather than each assuming they have the connection to
+    themselves."""
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = snapshot_dir / f"cam{camera_id}_{ts}.jpg"
 
-    cmd = [
-        "ffmpeg", "-y", "-nostdin", "-loglevel", "error",
-        "-rtsp_transport", "tcp", "-i", rtsp_url,
-        "-frames:v", "1", str(out_path),
-    ]
-    proc = await asyncio.create_subprocess_exec(*cmd, stderr=asyncio.subprocess.PIPE)
-    try:
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=CAPTURE_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError:
-        proc.kill()
-        raise SnapshotError("Snapshot capture timed out")
+    got_slot = await acquire_device_slot(rtsp_url, timeout=DEVICE_SLOT_WAIT_SECONDS)
+    if not got_slot:
+        raise SnapshotError(
+            "Camera busy: device already has an active connection "
+            "(recording or live view)"
+        )
 
-    if proc.returncode != 0 or not out_path.exists():
-        raise SnapshotError(f"ffmpeg failed: {stderr.decode(errors='replace')[:300]}")
+    try:
+        cmd = [
+            "ffmpeg", "-y", "-nostdin", "-loglevel", "error",
+            "-rtsp_transport", "tcp", "-i", rtsp_url,
+            "-frames:v", "1", str(out_path),
+        ]
+        proc = await asyncio.create_subprocess_exec(*cmd, stderr=asyncio.subprocess.PIPE)
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=CAPTURE_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise SnapshotError("Snapshot capture timed out")
+
+        if proc.returncode != 0 or not out_path.exists():
+            raise SnapshotError(f"ffmpeg failed: {stderr.decode(errors='replace')[:300]}")
+    finally:
+        release_device_slot(rtsp_url)
 
     _prune_old_snapshots(snapshot_dir, camera_id)
     return out_path

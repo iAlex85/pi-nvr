@@ -43,6 +43,42 @@
     return `/api/cameras/${camId}/mjpeg?t=${Date.now()}&width=${width}&fps=${fps}`;
   }
 
+  // The camera hardware only tolerates one RTSP connection at a time,
+  // shared across both channels and recording (see
+  // app/cameras/device_lock.py) -- the mjpeg endpoint returns a 503
+  // when that slot is taken and nothing frees up within a few seconds,
+  // which a plain <img> just renders as a broken image with no
+  // indication of what happened or that it'll resolve itself. Show a
+  // status badge and retry every few seconds instead.
+  const STREAM_RETRY_MS = 3000;
+
+  function handleMainStreamError(imgEl, camId) {
+    const tile = imgEl.closest(".camera-tile");
+    if (tile && !tile.querySelector(".stream-busy-badge")) {
+      const badge = document.createElement("div");
+      badge.className = "stream-busy-badge";
+      badge.textContent = "Camera busy — retrying…";
+      tile.appendChild(badge);
+    }
+    setTimeout(() => {
+      // Only retry if this tile is still showing the same camera --
+      // avoids a stale retry firing after the user has switched to a
+      // different camera in the meantime.
+      if (renderedMainCameraId === camId) {
+        imgEl.src = mjpegSrc(camId);
+      }
+    }, STREAM_RETRY_MS);
+  }
+
+  function handleMainStreamLoad(imgEl) {
+    const tile = imgEl.closest(".camera-tile");
+    const badge = tile && tile.querySelector(".stream-busy-badge");
+    if (badge) badge.remove();
+  }
+
+  window.__pinvrMainStreamError = handleMainStreamError;
+  window.__pinvrMainStreamLoad = handleMainStreamLoad;
+
   function getFavoriteId() {
     const raw = localStorage.getItem(FAVORITE_KEY);
     return raw ? parseInt(raw, 10) : null;
@@ -145,7 +181,9 @@
       const isFavorite = featured.id === favoriteId;
       spotlightMain.innerHTML = `
         <div class="camera-tile spotlight-main-tile">
-          <img src="${mjpegSrc(featured.id)}" alt="${featured.name}" />
+          <img src="${mjpegSrc(featured.id)}" alt="${featured.name}"
+               onerror="window.__pinvrMainStreamError(this, ${featured.id})"
+               onload="window.__pinvrMainStreamLoad(this)" />
           <div class="tile-label">
             ${featured.name}
             <span style="float:right; display:flex; gap:4px;">
