@@ -370,8 +370,12 @@ async def mjpeg_stream(
             "-vf", f"scale={width}:-2",
             "pipe:1",
         ]
-        proc = await _spawn_mjpeg_process(camera_id, cmd)
-        _active_mjpeg_processes[camera_id] = proc
+        try:
+            proc = await _spawn_mjpeg_process(camera_id, cmd)
+            _active_mjpeg_processes[camera_id] = proc
+        except BaseException:
+            release_device_slot(rtsp_url)
+            raise
 
     boundary = "pi-nvr-frame"
 
@@ -533,30 +537,27 @@ async def audio_stream(camera_id: int, request: Request, db: Session = Depends(g
             "-f", "mp3",
             "pipe:1",
         ]
-        proc = await _spawn_audio_process(camera_id, cmd)
+        try:
+            proc = await _spawn_audio_process(camera_id, cmd)
 
-        if proc.returncode is not None:
-            # All retry attempts failed to keep ffmpeg alive -- most likely
-            # this camera only tolerates one RTSP client at a time and the
-            # live-view video stream is already holding that slot. Fail
-            # loudly with the real reason instead of returning an empty
-            # response body, which browsers surface as a generic, useless
-            # "AbortError: the operation was aborted".
-            stderr = b""
-            if proc.stderr:
-                stderr = await proc.stderr.read()
-            detail = stderr.decode(errors="replace")[-500:].strip() or "ffmpeg exited immediately with no error output"
-            logger.error("Live audio: giving up for camera %s: %s", camera_id, detail)
+            if proc.returncode is not None:
+                stderr = b""
+                if proc.stderr:
+                    stderr = await proc.stderr.read()
+                detail = stderr.decode(errors="replace")[-500:].strip() or "ffmpeg exited immediately with no error output"
+                logger.error("Live audio: giving up for camera %s: %s", camera_id, detail)
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        f"Could not start audio for this camera: {detail}. If Live "
+                        "view video is open for the same camera, this hardware may "
+                        "only allow one RTSP connection at a time -- try closing "
+                        "the video tile first."
+                    ),
+                )
+        except BaseException:
             release_device_slot(rtsp_url)
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    f"Could not start audio for this camera: {detail}. If Live "
-                    "view video is open for the same camera, this hardware may "
-                    "only allow one RTSP connection at a time -- try closing "
-                    "the video tile first."
-                ),
-            )
+            raise
 
         _active_audio_processes[camera_id] = proc
 
