@@ -1,24 +1,25 @@
 from __future__ import annotations
-
+ 
 import logging
-
+import datetime
+ 
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-
+ 
 from app.auth.dependencies import require_admin, get_current_user
 from app.cameras import onvif_discovery, network_scan, ptz as ptz_mod
 from app.cameras import onvif_raw
-from app.cameras.device_lock import acquire_device_slot, release_device_slot
+from app.cameras.device_lock import acquire_device_slot_priority, release_device_slot
 from app.cameras.url_utils import build_authenticated_rtsp_url
 from app.cameras.crypto import encrypt
-from app.database import get_db
-from app.models import Camera, CameraProtocol, PTZPreset, RecordingMode, User
-
+from app.database import get_db, session_scope
+from app.models import Camera, CameraProtocol, PTZPreset, Recording, RecordingMode, User
+ 
 logger = logging.getLogger("pi_nvr.cameras")
 router = APIRouter()
-
-
+ 
+ 
 class CameraIn(BaseModel):
     name: str
     group: str | None = None
@@ -37,8 +38,8 @@ class CameraIn(BaseModel):
     motion_enabled: bool = False
     rotate_degrees: int = 0
     mirror: bool = False
-
-
+ 
+ 
 class CameraOut(BaseModel):
     id: int
     name: str
@@ -55,28 +56,28 @@ class CameraOut(BaseModel):
     onvif_host: str | None
     onvif_port: int | None
     onvif_username: str | None
-
+ 
     class Config:
         from_attributes = True
-
-
+ 
+ 
 def _camera_to_out(camera: Camera) -> CameraOut:
     return CameraOut.model_validate(camera)
-
-
+ 
+ 
 @router.get("", response_model=list[CameraOut])
 def list_cameras(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return [_camera_to_out(c) for c in db.query(Camera).all()]
-
-
+ 
+ 
 @router.get("/{camera_id}", response_model=CameraOut)
 def get_camera(camera_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     camera = db.get(Camera, camera_id)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
     return _camera_to_out(camera)
-
-
+ 
+ 
 @router.post("", response_model=CameraOut, status_code=status.HTTP_201_CREATED)
 async def create_camera(
     payload: CameraIn,
@@ -105,14 +106,14 @@ async def create_camera(
     )
     db.add(camera)
     db.flush()
-
+ 
     if camera.enabled:
         await request.app.state.camera_manager.watch_camera(camera.id)
-
+ 
     logger.info("Camera '%s' created (id=%s)", camera.name, camera.id)
     return _camera_to_out(camera)
-
-
+ 
+ 
 @router.put("/{camera_id}", response_model=CameraOut)
 async def update_camera(
     camera_id: int,
@@ -124,9 +125,9 @@ async def update_camera(
     camera = db.get(Camera, camera_id)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
-
+ 
     was_enabled = camera.enabled
-
+ 
     camera.name = payload.name
     camera.group = payload.group
     camera.protocol = payload.protocol
@@ -148,16 +149,16 @@ async def update_camera(
     camera.mirror = payload.mirror
     db.add(camera)
     db.flush()
-
+ 
     cam_mgr = request.app.state.camera_manager
     if was_enabled and not camera.enabled:
         await cam_mgr.unwatch_camera(camera.id)
     elif camera.enabled:
         await cam_mgr.watch_camera(camera.id)
-
+ 
     return _camera_to_out(camera)
-
-
+ 
+ 
 @router.delete("/{camera_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_camera(
     camera_id: int,
@@ -170,30 +171,30 @@ async def delete_camera(
         raise HTTPException(status_code=404, detail="Camera not found")
     await request.app.state.camera_manager.unwatch_camera(camera_id)
     db.delete(camera)
-
-
+ 
+ 
 @router.get("/{camera_id}/status")
 def camera_status(camera_id: int, request: Request, user: User = Depends(get_current_user)):
     status_obj = request.app.state.camera_manager.get_status(camera_id)
     if status_obj is None:
         return {"camera_id": camera_id, "online": False, "last_seen": None}
     return dataclasses_asdict_safe(status_obj)
-
-
+ 
+ 
 @router.get("/status/all")
 def all_camera_status(request: Request, user: User = Depends(get_current_user)):
     return {
         cam_id: dataclasses_asdict_safe(s)
         for cam_id, s in request.app.state.camera_manager.all_status().items()
     }
-
-
+ 
+ 
 @router.post("/discover")
 async def discover_cameras(user: User = Depends(require_admin)):
     devices = await onvif_discovery.discover()
     return {"devices": [d.to_dict() for d in devices]}
-
-
+ 
+ 
 @router.post("/scan-network")
 async def scan_network(user: User = Depends(require_admin)):
     """Fallback for cameras that don't answer ONVIF WS-Discovery (common
@@ -204,8 +205,8 @@ async def scan_network(user: User = Depends(require_admin)):
     Can take several seconds on a full /24."""
     results = await network_scan.scan_for_cameras()
     return {"hosts": results}
-
-
+ 
+ 
 # --------------------------------------------------------------------------
 # Live view (MJPEG). This is the one place the software *does* decode
 # video continuously -- there's no way to show a live low-latency preview
@@ -226,10 +227,10 @@ async def scan_network(user: User = Depends(require_admin)):
 # comes in -- guaranteeing at most one live-view stream per camera
 # regardless of whether the old client's disconnect was ever detected.
 # --------------------------------------------------------------------------
-
+ 
 import asyncio as _asyncio  # noqa: E402
 from fastapi.responses import StreamingResponse  # noqa: E402
-
+ 
 _active_mjpeg_processes: dict[int, "_asyncio.subprocess.Process"] = {}
 # Serializes the kill-old/settle/spawn-new sequence per camera. Without
 # this, two requests arriving close together (e.g. clicking through
@@ -239,23 +240,23 @@ _active_mjpeg_processes: dict[int, "_asyncio.subprocess.Process"] = {}
 # process or spawning a second connection concurrently with A's --
 # exactly the kind of overlap a single-RTSP-client camera can't handle.
 _mjpeg_locks: dict[int, "_asyncio.Lock"] = {}
-
+ 
 # How long a live-view request will wait for this camera's *physical
 # device* RTSP slot (see app/cameras/device_lock.py) before giving up.
 # Long enough to usually catch the gap between a continuously-recording
 # camera's reconnect attempts, short enough that a user clicking into
 # Spotlight gets a clear "camera busy" response instead of a long hang.
 DEVICE_SLOT_WAIT_SECONDS = 4.0
-
-
+ 
+ 
 def _get_mjpeg_lock(camera_id: int) -> "_asyncio.Lock":
     lock = _mjpeg_locks.get(camera_id)
     if lock is None:
         lock = _asyncio.Lock()
         _mjpeg_locks[camera_id] = lock
     return lock
-
-
+ 
+ 
 async def _kill_process(proc) -> None:
     if proc.returncode is not None:
         return
@@ -264,8 +265,43 @@ async def _kill_process(proc) -> None:
         await _asyncio.wait_for(proc.wait(), timeout=3)
     except _asyncio.TimeoutError:
         proc.kill()
-
-
+ 
+ 
+def _register_liveview_recording(camera_id: int, path, started_at: "datetime.datetime") -> None:
+    """Registers the stream-copy recording written alongside a live-view
+    session (see mjpeg_stream's cmd construction) as a Recording row so
+    it shows up in Playback like any other captured footage. Skips
+    tiny/empty files -- e.g. a tile that was open for a second while
+    switching cameras isn't worth cluttering the recordings list with."""
+    if path is None:
+        return
+    try:
+        if not path.exists():
+            return
+        size = path.stat().st_size
+        if size == 0:
+            path.unlink(missing_ok=True)
+            return
+        ended_at = datetime.datetime.now(datetime.timezone.utc)
+        duration = max((ended_at - started_at).total_seconds(), 0.0)
+        if duration < 2.0:
+            path.unlink(missing_ok=True)
+            return
+        with session_scope() as db:
+            db.add(Recording(
+                camera_id=camera_id,
+                file_path=str(path),
+                started_at=started_at,
+                ended_at=ended_at,
+                trigger="live_view",
+                size_bytes=size,
+                duration_seconds=duration,
+            ))
+        logger.info("Live view: registered recording for camera %s (%.0fs)", camera_id, duration)
+    except OSError:
+        logger.exception("Live view: failed to register recording for camera %s", camera_id)
+ 
+ 
 async def _spawn_mjpeg_process(camera_id: int, cmd: list, attempts: int = 3, retry_delay: float = 2.0):
     """Starts the ffmpeg live-view process, retrying a few times if it
     exits almost immediately -- typically means the camera hasn't yet
@@ -298,8 +334,8 @@ async def _spawn_mjpeg_process(camera_id: int, cmd: list, attempts: int = 3, ret
             return proc
     logger.error("Live view: all %d connection attempts failed for camera %s", attempts, camera_id)
     return last_proc
-
-
+ 
+ 
 @router.get("/{camera_id}/mjpeg")
 async def mjpeg_stream(
     camera_id: int,
@@ -312,9 +348,9 @@ async def mjpeg_stream(
     camera = db.get(Camera, camera_id)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
-
+ 
     logger.info("Live view: new request for camera %s (width=%s fps=%s)", camera_id, width, fps)
-
+ 
     lock = _get_mjpeg_lock(camera_id)
     async with lock:
         old_proc = _active_mjpeg_processes.get(camera_id)
@@ -325,9 +361,9 @@ async def mjpeg_stream(
             # firmware has released its RTSP session slot equally promptly --
             # give it a moment before trying to reconnect.
             await _asyncio.sleep(1.5)
-
+ 
         rtsp_url = build_authenticated_rtsp_url(camera, substream=True)
-
+ 
         # width/fps are user-adjustable (Live view quality selector) since
         # the right trade-off depends on hardware -- the Pi 3 has no
         # hardware decode for this camera's HEVC substream, so higher
@@ -351,7 +387,7 @@ async def mjpeg_stream(
         # than spawning ffmpeg straight into a connection that's certain
         # to fail; if nothing frees up in time, fail clearly instead of
         # returning a stream that silently never produces a frame.
-        got_slot = await acquire_device_slot(rtsp_url, timeout=DEVICE_SLOT_WAIT_SECONDS)
+        got_slot = await acquire_device_slot_priority(rtsp_url, timeout=DEVICE_SLOT_WAIT_SECONDS)
         if not got_slot:
             logger.warning("Live view: device busy for camera %s, giving up after %.0fs", camera_id, DEVICE_SLOT_WAIT_SECONDS)
             raise HTTPException(
@@ -362,23 +398,52 @@ async def mjpeg_stream(
                     "in a few seconds."
                 ),
             )
-
+ 
         cmd = [
-            "ffmpeg", "-nostdin", "-loglevel", "error",
+            "ffmpeg", "-y", "-nostdin", "-loglevel", "error",
             "-rtsp_transport", "tcp", "-timeout", "10000000", "-i", rtsp_url,
             "-f", "mjpeg", "-q:v", "6", "-r", str(fps),
             "-vf", f"scale={width}:-2",
             "pipe:1",
         ]
+        # Second output on the SAME ffmpeg process/connection: a plain
+        # stream-copy (cheap -- no extra decode) recording of this live
+        # -view session, since a person actively watching is a perfectly
+        # good reason to keep the footage, and the camera's one-
+        # connection limit means "record while also watching" only works
+        # by piggybacking on the connection live view already has open,
+        # not by opening a second one. MKV because the camera's PCM
+        # A-law audio isn't valid in MP4 (see project notes). Registered
+        # into the Recording table (trigger="live_view") once the
+        # session ends, in the frame_generator finally block below.
+        liveview_path = None
+        liveview_started_at = datetime.datetime.now(datetime.timezone.utc)
+        try:
+            storage = request.app.state.storage
+            output_dir = storage.recording_dir_for_camera(camera)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            ts = liveview_started_at.strftime("%Y%m%d_%H%M%S")
+            liveview_path = output_dir / f"cam{camera_id}_liveview_{ts}.mkv"
+            cmd += ["-c:v", "copy", "-c:a", "copy", str(liveview_path)]
+        except Exception:
+            logger.exception("Live view: could not set up recording-while-watching for camera %s", camera_id)
+            liveview_path = None
+ 
+        # From here until the process is actually registered, ownership
+        # of the device slot hasn't been handed off to frame_generator's
+        # finally block yet -- if the client cancels this request (e.g.
+        # the retry logic in live.js replacing img.src mid-request) or
+        # _spawn_mjpeg_process raises, release explicitly instead of
+        # leaking the slot forever with nothing left alive to release it.
         try:
             proc = await _spawn_mjpeg_process(camera_id, cmd)
             _active_mjpeg_processes[camera_id] = proc
         except BaseException:
             release_device_slot(rtsp_url)
             raise
-
+ 
     boundary = "pi-nvr-frame"
-
+ 
     async def frame_generator():
         try:
             buffer = b""
@@ -420,8 +485,9 @@ async def mjpeg_stream(
                     proc.kill()
             if _active_mjpeg_processes.get(camera_id) is proc:
                 del _active_mjpeg_processes[camera_id]
+            _register_liveview_recording(camera_id, liveview_path, liveview_started_at)
             release_device_slot(rtsp_url)
-
+ 
     return StreamingResponse(
         frame_generator(),
         media_type=f"multipart/x-mixed-replace; boundary={boundary}",
@@ -430,8 +496,8 @@ async def mjpeg_stream(
             "Pragma": "no-cache",
         },
     )
-
-
+ 
+ 
 # --------------------------------------------------------------------------
 # Live audio listen. Same single-RTSP-client hazard as the MJPEG live
 # view above, so this reuses the identical safety pattern (kill old
@@ -446,19 +512,19 @@ async def mjpeg_stream(
 # and we stream it out as chunked audio/mpeg, which <audio src="..."> can
 # play like an internet radio stream.
 # --------------------------------------------------------------------------
-
+ 
 _active_audio_processes: dict[int, "_asyncio.subprocess.Process"] = {}
 _audio_locks: dict[int, "_asyncio.Lock"] = {}
-
-
+ 
+ 
 def _get_audio_lock(camera_id: int) -> "_asyncio.Lock":
     lock = _audio_locks.get(camera_id)
     if lock is None:
         lock = _asyncio.Lock()
         _audio_locks[camera_id] = lock
     return lock
-
-
+ 
+ 
 async def _spawn_audio_process(camera_id: int, cmd: list, attempts: int = 3, retry_delay: float = 2.0):
     """Same retry-on-immediate-exit logic as _spawn_mjpeg_process -- see
     that function's docstring for why this is needed on single-RTSP-client
@@ -489,16 +555,16 @@ async def _spawn_audio_process(camera_id: int, cmd: list, attempts: int = 3, ret
             return proc
     logger.error("Live audio: all %d connection attempts failed for camera %s", attempts, camera_id)
     return last_proc
-
-
+ 
+ 
 @router.get("/{camera_id}/audio")
 async def audio_stream(camera_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     camera = db.get(Camera, camera_id)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
-
+ 
     logger.info("Live audio: new request for camera %s", camera_id)
-
+ 
     lock = _get_audio_lock(camera_id)
     async with lock:
         old_proc = _active_audio_processes.get(camera_id)
@@ -506,17 +572,17 @@ async def audio_stream(camera_id: int, request: Request, db: Session = Depends(g
             logger.info("Live audio: killing previous stream for camera %s (pid=%s)", camera_id, old_proc.pid)
             await _kill_process(old_proc)
             await _asyncio.sleep(1.5)
-
+ 
         # Full-resolution stream (not substream) since audio is muxed with
         # the PTZ/fixed lens's main feed on this hardware; -vn drops video
         # entirely so ffmpeg doesn't waste Pi 3 CPU decoding frames it'll
         # never use.
         rtsp_url = build_authenticated_rtsp_url(camera, substream=False)
-
+ 
         # Same physical-device slot as MJPEG live view and recording --
         # see app/cameras/device_lock.py and the identical wait in
         # mjpeg_stream() above.
-        got_slot = await acquire_device_slot(rtsp_url, timeout=DEVICE_SLOT_WAIT_SECONDS)
+        got_slot = await acquire_device_slot_priority(rtsp_url, timeout=DEVICE_SLOT_WAIT_SECONDS)
         if not got_slot:
             logger.warning("Live audio: device busy for camera %s, giving up after %.0fs", camera_id, DEVICE_SLOT_WAIT_SECONDS)
             raise HTTPException(
@@ -527,7 +593,7 @@ async def audio_stream(camera_id: int, request: Request, db: Session = Depends(g
                     "in a few seconds."
                 ),
             )
-
+ 
         # -timeout bounds a stalled read the same way the MJPEG endpoint's
         # does -- see that endpoint's comment for why.
         cmd = [
@@ -537,10 +603,20 @@ async def audio_stream(camera_id: int, request: Request, db: Session = Depends(g
             "-f", "mp3",
             "pipe:1",
         ]
+        # Same ownership-handoff hazard as mjpeg_stream above: if this
+        # request is cancelled before reaching _active_audio_processes
+        # registration, the device slot must be released explicitly here
+        # or nothing left running will ever release it.
         try:
             proc = await _spawn_audio_process(camera_id, cmd)
-
+ 
             if proc.returncode is not None:
+                # All retry attempts failed to keep ffmpeg alive -- most likely
+                # this camera only tolerates one RTSP client at a time and the
+                # live-view video stream is already holding that slot. Fail
+                # loudly with the real reason instead of returning an empty
+                # response body, which browsers surface as a generic, useless
+                # "AbortError: the operation was aborted".
                 stderr = b""
                 if proc.stderr:
                     stderr = await proc.stderr.read()
@@ -555,12 +631,11 @@ async def audio_stream(camera_id: int, request: Request, db: Session = Depends(g
                         "the video tile first."
                     ),
                 )
+ 
+            _active_audio_processes[camera_id] = proc
         except BaseException:
             release_device_slot(rtsp_url)
             raise
-
-        _active_audio_processes[camera_id] = proc
-
     async def audio_generator():
         try:
             while True:
@@ -583,7 +658,7 @@ async def audio_stream(camera_id: int, request: Request, db: Session = Depends(g
             if _active_audio_processes.get(camera_id) is proc:
                 del _active_audio_processes[camera_id]
             release_device_slot(rtsp_url)
-
+ 
     return StreamingResponse(
         audio_generator(),
         media_type="audio/mpeg",
@@ -592,8 +667,8 @@ async def audio_stream(camera_id: int, request: Request, db: Session = Depends(g
             "Pragma": "no-cache",
         },
     )
-
-
+ 
+ 
 def is_camera_actively_streamed(camera_id: int) -> bool:
     """True if a live-view MJPEG tile or an audio listen stream currently
     holds a connection to this camera. Used by CameraManager's health
@@ -609,44 +684,44 @@ def is_camera_actively_streamed(camera_id: int) -> bool:
     if audio_proc is not None and audio_proc.returncode is None:
         return True
     return False
-
-
+ 
+ 
 def dataclasses_asdict_safe(obj) -> dict:
     import dataclasses
-
+ 
     return dataclasses.asdict(obj)
-
-
+ 
+ 
 # --------------------------------------------------------------------------
 # PTZ controls (Phase 9). All PTZ endpoints require the camera to have
 # ONVIF host/credentials configured; unsupported cameras get a 409.
 # --------------------------------------------------------------------------
-
+ 
 class PTZMoveRequest(BaseModel):
     direction: str  # up/down/left/right/zoom_in/zoom_out
     speed: float = 0.5
-
-
+ 
+ 
 class PTZPresetIn(BaseModel):
     name: str
-
-
+ 
+ 
 class PTZPresetOut(BaseModel):
     id: int
     name: str
     onvif_token: str | None
-
+ 
     class Config:
         from_attributes = True
-
-
+ 
+ 
 def _get_camera_or_404(db: Session, camera_id: int) -> Camera:
     camera = db.get(Camera, camera_id)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
     return camera
-
-
+ 
+ 
 @router.post("/{camera_id}/ptz/detect")
 async def detect_ptz_support(camera_id: int, db: Session = Depends(get_db), user: User = Depends(require_admin)):
     camera = _get_camera_or_404(db, camera_id)
@@ -654,8 +729,8 @@ async def detect_ptz_support(camera_id: int, db: Session = Depends(get_db), user
     camera.supports_ptz = result["supported"]
     db.add(camera)
     return result
-
-
+ 
+ 
 @router.post("/{camera_id}/ptz/move")
 async def ptz_move(camera_id: int, payload: PTZMoveRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     camera = _get_camera_or_404(db, camera_id)
@@ -668,8 +743,8 @@ async def ptz_move(camera_id: int, payload: PTZMoveRequest, db: Session = Depend
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True}
-
-
+ 
+ 
 @router.post("/{camera_id}/ptz/stop")
 async def ptz_stop(camera_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     camera = _get_camera_or_404(db, camera_id)
@@ -680,8 +755,8 @@ async def ptz_stop(camera_id: int, db: Session = Depends(get_db), user: User = D
     except onvif_raw.RawPTZError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"ok": True}
-
-
+ 
+ 
 @router.post("/{camera_id}/ptz/home")
 async def ptz_home(camera_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     camera = _get_camera_or_404(db, camera_id)
@@ -692,14 +767,14 @@ async def ptz_home(camera_id: int, db: Session = Depends(get_db), user: User = D
     except onvif_raw.RawPTZError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"ok": True}
-
-
+ 
+ 
 @router.get("/{camera_id}/ptz/presets", response_model=list[PTZPresetOut])
 def list_ptz_presets(camera_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     _get_camera_or_404(db, camera_id)
     return db.query(PTZPreset).filter(PTZPreset.camera_id == camera_id).all()
-
-
+ 
+ 
 @router.post("/{camera_id}/ptz/presets", response_model=PTZPresetOut)
 async def create_ptz_preset(camera_id: int, payload: PTZPresetIn, db: Session = Depends(get_db), user: User = Depends(require_admin)):
     camera = _get_camera_or_404(db, camera_id)
@@ -711,8 +786,8 @@ async def create_ptz_preset(camera_id: int, payload: PTZPresetIn, db: Session = 
     db.add(preset)
     db.flush()
     return preset
-
-
+ 
+ 
 @router.post("/{camera_id}/ptz/presets/{preset_id}/goto")
 async def goto_ptz_preset(camera_id: int, preset_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     camera = _get_camera_or_404(db, camera_id)
@@ -724,8 +799,8 @@ async def goto_ptz_preset(camera_id: int, preset_id: int, db: Session = Depends(
     except ptz_mod.PTZUnsupportedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True}
-
-
+ 
+ 
 @router.delete("/{camera_id}/ptz/presets/{preset_id}")
 def delete_ptz_preset(camera_id: int, preset_id: int, db: Session = Depends(get_db), user: User = Depends(require_admin)):
     preset = db.get(PTZPreset, preset_id)
