@@ -353,16 +353,28 @@ async def mjpeg_stream(
  
     lock = _get_mjpeg_lock(camera_id)
     async with lock:
+        rtsp_url = build_authenticated_rtsp_url(camera, substream=True)
+ 
         old_proc = _active_mjpeg_processes.get(camera_id)
         if old_proc is not None:
             logger.info("Live view: killing previous stream for camera %s (pid=%s)", camera_id, old_proc.pid)
             await _kill_process(old_proc)
+            # Don't rely on that old request's own frame_generator to
+            # notice its process died and clean up after itself -- if
+            # that request got orphaned (client disconnected without a
+            # clean close, common on mobile: backgrounding, a network
+            # switch, a tab closed mid-stream), its task may never run
+            # again, and its device-slot lock would leak forever with
+            # every future request here just re-killing the same stale
+            # pid and never getting anywhere. Since we already have the
+            # process in hand, clean up its bookkeeping ourselves.
+            if _active_mjpeg_processes.get(camera_id) is old_proc:
+                del _active_mjpeg_processes[camera_id]
+            release_device_slot(rtsp_url)
             # Our process exiting promptly doesn't mean the camera's own
             # firmware has released its RTSP session slot equally promptly --
             # give it a moment before trying to reconnect.
             await _asyncio.sleep(1.5)
- 
-        rtsp_url = build_authenticated_rtsp_url(camera, substream=True)
  
         # width/fps are user-adjustable (Live view quality selector) since
         # the right trade-off depends on hardware -- the Pi 3 has no
@@ -567,17 +579,25 @@ async def audio_stream(camera_id: int, request: Request, db: Session = Depends(g
  
     lock = _get_audio_lock(camera_id)
     async with lock:
-        old_proc = _active_audio_processes.get(camera_id)
-        if old_proc is not None:
-            logger.info("Live audio: killing previous stream for camera %s (pid=%s)", camera_id, old_proc.pid)
-            await _kill_process(old_proc)
-            await _asyncio.sleep(1.5)
- 
         # Full-resolution stream (not substream) since audio is muxed with
         # the PTZ/fixed lens's main feed on this hardware; -vn drops video
         # entirely so ffmpeg doesn't waste Pi 3 CPU decoding frames it'll
         # never use.
         rtsp_url = build_authenticated_rtsp_url(camera, substream=False)
+ 
+        old_proc = _active_audio_processes.get(camera_id)
+        if old_proc is not None:
+            logger.info("Live audio: killing previous stream for camera %s (pid=%s)", camera_id, old_proc.pid)
+            await _kill_process(old_proc)
+            # See the identical comment in mjpeg_stream() above -- don't
+            # trust an orphaned old request to clean up its own
+            # device-slot lock; do it ourselves since we already have
+            # the process in hand.
+            if _active_audio_processes.get(camera_id) is old_proc:
+                del _active_audio_processes[camera_id]
+            release_device_slot(rtsp_url)
+            await _asyncio.sleep(1.5)
+ 
  
         # Same physical-device slot as MJPEG live view and recording --
         # see app/cameras/device_lock.py and the identical wait in
