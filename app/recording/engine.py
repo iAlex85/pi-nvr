@@ -25,6 +25,7 @@ import asyncio
 import datetime
 import logging
 import shlex
+import time
 from pathlib import Path
  
 from app.config import Config
@@ -56,6 +57,7 @@ class _CameraRecordingState:
         self.rtsp_url: str | None = None
         self.holds_device_slot: bool = False
         self.yield_task: asyncio.Task | None = None
+        self.process_started_at: float = 0.0
  
  
 class RecordingEngine:
@@ -133,6 +135,7 @@ class RecordingEngine:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
+        state.process_started_at = time.monotonic()
         state.watcher_task = asyncio.create_task(self._watch_process(camera_id))
         if state.yield_task:
             state.yield_task.cancel()
@@ -446,9 +449,23 @@ class RecordingEngine:
             )
             db.add(rec)
  
+    # A camera hardware failure (unplugged, no route to host, etc.) is
+    # usually reported by ffmpeg within well under a second of spawning.
+    # Treating a just-spawned process as "conclusively connected" (see
+    # CameraManager._probe_once, which skips its own real connectivity
+    # check whenever this returns True) produces a rapid online/offline
+    # notification flap on a dead camera: process spawns -> probe skips,
+    # forces online -> process dies near-instantly -> probe runs next
+    # tick, correctly marks offline -> repeat. Requiring the process to
+    # have survived a short grace period closes that gap while barely
+    # delaying the skip-probe benefit for a real, working connection.
+    RECORDING_CONFIRM_SECONDS = 2.0
+ 
     def is_recording(self, camera_id: int) -> bool:
         state = self._states.get(camera_id)
-        return bool(state and state.process and state.process.returncode is None)
+        if not (state and state.process and state.process.returncode is None):
+            return False
+        return (time.monotonic() - state.process_started_at) >= self.RECORDING_CONFIRM_SECONDS
  
     async def start_manual(self, camera_id: int) -> None:
         with session_scope() as db:
