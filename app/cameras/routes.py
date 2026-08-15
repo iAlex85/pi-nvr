@@ -2,6 +2,7 @@ from __future__ import annotations
  
 import logging
 import datetime
+import time
  
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from pydantic import BaseModel
@@ -232,6 +233,7 @@ import asyncio as _asyncio  # noqa: E402
 from fastapi.responses import StreamingResponse  # noqa: E402
  
 _active_mjpeg_processes: dict[int, "_asyncio.subprocess.Process"] = {}
+_mjpeg_started_at: dict[int, float] = {}
 # Serializes the kill-old/settle/spawn-new sequence per camera. Without
 # this, two requests arriving close together (e.g. clicking through
 # live-view layout options quickly) could interleave: request B reads
@@ -450,6 +452,7 @@ async def mjpeg_stream(
         try:
             proc = await _spawn_mjpeg_process(camera_id, cmd)
             _active_mjpeg_processes[camera_id] = proc
+            _mjpeg_started_at[camera_id] = time.monotonic()
         except BaseException:
             release_device_slot(rtsp_url)
             raise
@@ -526,6 +529,7 @@ async def mjpeg_stream(
 # --------------------------------------------------------------------------
  
 _active_audio_processes: dict[int, "_asyncio.subprocess.Process"] = {}
+_audio_started_at: dict[int, float] = {}
 _audio_locks: dict[int, "_asyncio.Lock"] = {}
  
  
@@ -653,6 +657,7 @@ async def audio_stream(camera_id: int, request: Request, db: Session = Depends(g
                 )
  
             _active_audio_processes[camera_id] = proc
+            _audio_started_at[camera_id] = time.monotonic()
         except BaseException:
             release_device_slot(rtsp_url)
             raise
@@ -689,20 +694,37 @@ async def audio_stream(camera_id: int, request: Request, db: Session = Depends(g
     )
  
  
+STREAM_CONFIRM_SECONDS = 2.0
+ 
+ 
 def is_camera_actively_streamed(camera_id: int) -> bool:
     """True if a live-view MJPEG tile or an audio listen stream currently
-    holds a connection to this camera. Used by CameraManager's health
-    probe to skip its own periodic reconnect attempt -- on single-RTSP-
-    client hardware, that probe firing while something is actually being
-    watched (Live view, or now the Dashboard's always-on live tiles) can
-    knock the real connection loose for no reason. A process existing in
-    the registry but already exited (returncode set) doesn't count."""
+    holds a *confirmed* connection to this camera. Used by CameraManager's
+    health probe to skip its own periodic reconnect attempt -- on single-
+    RTSP-client hardware, that probe firing while something is actually
+    being watched (Live view, or the Dashboard's always-on live tiles)
+    can knock the real connection loose for no reason.
+ 
+    Requires the process to have been registered for at least
+    STREAM_CONFIRM_SECONDS, not just to exist -- _spawn_mjpeg_process
+    already does its own short liveness check before returning, but a
+    camera that's actually unreachable can still take a little longer
+    than that to fail outright (e.g. an ARP/route lookup that hasn't
+    timed out yet), and treating "a process object exists" as
+    conclusive proof of connectivity produces exactly the online/
+    offline flapping this grace period exists to prevent -- see the
+    identical fix and rationale on RecordingEngine.is_recording()."""
+    now = time.monotonic()
     mjpeg_proc = _active_mjpeg_processes.get(camera_id)
     if mjpeg_proc is not None and mjpeg_proc.returncode is None:
-        return True
+        started = _mjpeg_started_at.get(camera_id, 0.0)
+        if now - started >= STREAM_CONFIRM_SECONDS:
+            return True
     audio_proc = _active_audio_processes.get(camera_id)
     if audio_proc is not None and audio_proc.returncode is None:
-        return True
+        started = _audio_started_at.get(camera_id, 0.0)
+        if now - started >= STREAM_CONFIRM_SECONDS:
+            return True
     return False
  
  
