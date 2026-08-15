@@ -4,12 +4,12 @@ reachable, what's its last-seen FPS/bitrate, etc. Persistent camera config
 (URL, name, credentials...) lives in the `cameras` DB table via normal CRUD
 in app/cameras/routes.py -- this module is the live supervisor on top of
 that data.
-
+ 
 Reconnection strategy: a background asyncio task per enabled camera probes
 the RTSP URL periodically (cheap `ffprobe`-style connect, not a full pull)
 and flips online/offline state. RecordingEngine and MotionSupervisor watch
 that state to know when to (re)start their own subprocesses.
-
+ 
 Many budget/consumer cameras (this includes most "generic Chinese WiFi
 camera" hardware) only accept ONE RTSP client at a time -- a second
 connection attempt doesn't queue, it just fails or knocks the first one
@@ -23,19 +23,19 @@ a second, redundant probe connection is both unnecessary and actively
 harmful on single-client hardware.
 """
 from __future__ import annotations
-
+ 
 import asyncio
 import dataclasses
 import logging
 import time
-
+ 
 from app.cameras.url_utils import build_authenticated_rtsp_url
 from app.config import Config
 from app.database import session_scope
 from app.models import Camera
-
+ 
 logger = logging.getLogger("pi_nvr.cameras")
-
+ 
 # Lazily/defensively imported: routes.py defines is_camera_actively_streamed
 # (checks the live-view MJPEG and audio-listen process registries). Deferred
 # to avoid any import-order fragility between these two modules, and
@@ -43,8 +43,8 @@ logger = logging.getLogger("pi_nvr.cameras")
 # test harness that imports this module standalone) rather than failing --
 # worst case that just falls back to the old always-probe behavior.
 _active_stream_checker = None
-
-
+ 
+ 
 def _get_active_stream_checker():
     global _active_stream_checker
     if _active_stream_checker is None:
@@ -54,7 +54,7 @@ def _get_active_stream_checker():
         except ImportError:
             _active_stream_checker = lambda camera_id: False
     return _active_stream_checker
-
+ 
 # Default probe interval. Kept fairly quick now that the recording-skip
 # optimization below (see _probe_once) already prevents the specific
 # contention scenario that motivated a much slower default previously --
@@ -64,7 +64,7 @@ def _get_active_stream_checker():
 # quicker offline/online detection. Override via cameras.probe_interval_seconds.
 DEFAULT_PROBE_INTERVAL_SECONDS = 20
 PROBE_TIMEOUT_SECONDS = 8
-
+ 
 # Default cycle time for periodic Dashboard-snapshot capture. Cameras are
 # captured one at a time with a stagger gap between them (see
 # _snapshot_loop) rather than all at once -- firing simultaneous capture
@@ -74,8 +74,8 @@ PROBE_TIMEOUT_SECONDS = 8
 # cameras.snapshot_interval_seconds.
 DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 90
 SNAPSHOT_STAGGER_SECONDS = 5
-
-
+ 
+ 
 @dataclasses.dataclass
 class CameraStatus:
     camera_id: int
@@ -85,8 +85,9 @@ class CameraStatus:
     fps: float | None = None
     bitrate_kbps: float | None = None
     consecutive_failures: int = 0
-
-
+    offline_notified: bool = False
+ 
+ 
 class CameraManager:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -100,24 +101,24 @@ class CameraManager:
         self._notifications = None
         self._storage = None
         self._snapshot_task: asyncio.Task | None = None
-
+ 
     def set_recording_engine(self, recording_engine) -> None:
         self._recording_engine = recording_engine
-
+ 
     def set_notifications(self, notifications) -> None:
         self._notifications = notifications
-
+ 
     def set_storage(self, storage) -> None:
         self._storage = storage
-
+ 
     @property
     def _probe_interval(self) -> float:
         return self.cfg.get("cameras.probe_interval_seconds", DEFAULT_PROBE_INTERVAL_SECONDS)
-
+ 
     @property
     def _snapshot_interval(self) -> float:
         return self.cfg.get("cameras.snapshot_interval_seconds", DEFAULT_SNAPSHOT_INTERVAL_SECONDS)
-
+ 
     async def start(self) -> None:
         self._running = True
         with session_scope() as db:
@@ -128,7 +129,7 @@ class CameraManager:
         if self._storage is not None:
             self._snapshot_task = asyncio.create_task(self._snapshot_loop())
         logger.info("CameraManager started, watching %d camera(s)", len(camera_ids))
-
+ 
     async def stop(self) -> None:
         self._running = False
         for task in self._tasks.values():
@@ -138,29 +139,29 @@ class CameraManager:
             await asyncio.gather(self._snapshot_task, return_exceptions=True)
         await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         self._tasks.clear()
-
+ 
     def _spawn_probe_task(self, camera_id: int) -> None:
         if camera_id in self._tasks:
             return
         self._status.setdefault(camera_id, CameraStatus(camera_id=camera_id))
         self._tasks[camera_id] = asyncio.create_task(self._probe_loop(camera_id))
-
+ 
     async def watch_camera(self, camera_id: int) -> None:
         """Called by routes.py after a camera is created/enabled."""
         self._spawn_probe_task(camera_id)
-
+ 
     async def unwatch_camera(self, camera_id: int) -> None:
         task = self._tasks.pop(camera_id, None)
         if task:
             task.cancel()
         self._status.pop(camera_id, None)
-
+ 
     def get_status(self, camera_id: int) -> CameraStatus | None:
         return self._status.get(camera_id)
-
+ 
     def all_status(self) -> dict[int, CameraStatus]:
         return dict(self._status)
-
+ 
     async def _probe_loop(self, camera_id: int) -> None:
         while self._running:
             try:
@@ -170,7 +171,7 @@ class CameraManager:
             except Exception as exc:  # noqa: BLE001 - keep the loop alive
                 logger.exception("Unexpected error probing camera %s: %s", camera_id, exc)
             await asyncio.sleep(self._probe_interval)
-
+ 
     async def _probe_once(self, camera_id: int) -> None:
         if self._recording_engine is not None and self._recording_engine.is_recording(camera_id):
             # Already have conclusive proof of connectivity from an active
@@ -181,8 +182,9 @@ class CameraManager:
             status.last_seen = time.time()
             status.last_error = None
             status.consecutive_failures = 0
+            status.offline_notified = False
             return
-
+ 
         if _get_active_stream_checker()(camera_id):
             # Same reasoning as the recording check above, extended to
             # Live view/Dashboard MJPEG tiles and audio listen: since the
@@ -196,8 +198,9 @@ class CameraManager:
             status.last_seen = time.time()
             status.last_error = None
             status.consecutive_failures = 0
+            status.offline_notified = False
             return
-
+ 
         with session_scope() as db:
             camera = db.get(Camera, camera_id)
             if camera is None or not camera.enabled:
@@ -205,9 +208,9 @@ class CameraManager:
                 return
             rtsp_url = build_authenticated_rtsp_url(camera)
             camera_name = camera.name
-
+ 
         status = self._status.setdefault(camera_id, CameraStatus(camera_id=camera_id))
-
+ 
         # `ffprobe` opens the stream just far enough to read stream info,
         # then exits -- much cheaper than pulling frames continuously.
         cmd = [
@@ -220,7 +223,7 @@ class CameraManager:
             "-timeout", str(PROBE_TIMEOUT_SECONDS * 1_000_000),
             rtsp_url,
         ]
-
+ 
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -233,25 +236,26 @@ class CameraManager:
         except asyncio.TimeoutError:
             self._mark_offline(status, "probe timed out", camera_name)
             return
-
+ 
         if proc.returncode != 0:
             self._mark_offline(status, stderr.decode(errors="replace")[:200], camera_name)
             return
-
+ 
         was_offline = not status.online
         status.online = True
         status.last_seen = time.time()
         status.last_error = None
         status.consecutive_failures = 0
+        status.offline_notified = False
         if was_offline:
             self._notify(camera_id, "camera_online", camera_name)
-
+ 
         for line in stdout.decode(errors="replace").splitlines():
             if line.startswith("r_frame_rate="):
                 status.fps = _parse_frame_rate(line.split("=", 1)[1])
             elif line.startswith("bit_rate=") and line.split("=", 1)[1].isdigit():
                 status.bitrate_kbps = int(line.split("=", 1)[1]) / 1000
-
+ 
     async def _snapshot_loop(self) -> None:
         while self._running:
             camera_ids = list(self._tasks.keys())
@@ -270,7 +274,7 @@ class CameraManager:
             # interval), still take a minimum breather before looping.
             remaining = self._snapshot_interval - (SNAPSHOT_STAGGER_SECONDS * len(camera_ids))
             await asyncio.sleep(max(remaining, SNAPSHOT_STAGGER_SECONDS))
-
+ 
     async def _maybe_capture_snapshot(self, camera_id: int) -> None:
         if self._storage is None:
             return
@@ -278,7 +282,7 @@ class CameraManager:
             return  # don't compete with an active recording connection
         if _get_active_stream_checker()(camera_id):
             return  # don't compete with an active Live view / audio connection
-
+ 
         with session_scope() as db:
             camera = db.get(Camera, camera_id)
             if camera is None or not camera.enabled:
@@ -288,7 +292,7 @@ class CameraManager:
             # why the actual capture call can't take the ORM object itself.
             rtsp_url = build_authenticated_rtsp_url(camera)
             snapshot_dir = self._storage.snapshot_dir_for_camera(camera)
-
+ 
         from app.cameras import snapshot as snapshot_capture
         try:
             await snapshot_capture.capture_snapshot(rtsp_url, snapshot_dir, camera_id)
@@ -296,26 +300,34 @@ class CameraManager:
             # Routine for an offline camera -- don't escalate to a warning,
             # the probe loop already reports online/offline status.
             logger.debug("Periodic snapshot skipped for camera %s: %s", camera_id, exc)
-
+ 
     def _mark_offline(self, status: CameraStatus, error: str, camera_name: str = "") -> None:
-        was_online = status.online
         status.online = False
         status.last_error = error
         status.consecutive_failures += 1
-        if was_online:
+        # Debounce: only actually notify once the failure is confirmed by
+        # a second check, and only once per outage (not on every single
+        # failed check afterward) -- something (an optimistic skip-probe
+        # branch above, or an occasional ad-hoc check overlapping the
+        # regular probe tick) can flip `online` back on between checks
+        # without a real reconnection happening, and firing a fresh
+        # "went offline" notification every time that happens is just
+        # noise for a camera that's simply still down.
+        if status.consecutive_failures >= 2 and not status.offline_notified:
+            status.offline_notified = True
             logger.warning(
                 "Camera %s went offline: %s", status.camera_id, error
             )
             self._notify(status.camera_id, "camera_offline", camera_name)
-
+ 
     def _notify(self, camera_id: int, event_type: str, camera_name: str) -> None:
         if self._notifications is None:
             return
         asyncio.create_task(
             self._notifications.publish(event_type, {"camera_id": camera_id, "camera_name": camera_name})
         )
-
-
+ 
+ 
 def _parse_frame_rate(raw: str) -> float | None:
     try:
         if "/" in raw:
